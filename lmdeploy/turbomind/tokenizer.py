@@ -119,8 +119,12 @@ class HuggingFaceTokenizer:
         if not osp.exists(backend_tokenizer_file) and model_file_exists:
             print('WARNING: Can not find tokenizer.json. '
                   'It may take long time to initialize the tokenizer.')
-        self.model = AutoTokenizer.from_pretrained(model_dir,
-                                                   trust_remote_code=True)
+        self.model = AutoTokenizer.from_pretrained(
+            model_dir,
+            trust_remote_code=True,
+            use_fast=False,
+            use_legacy=True,
+        )
         self.need_padding = isinstance(self.model, LlamaTokenizerFast) \
             or isinstance(self.model, CodeLlamaTokenizerFast)
         self._no_prefix_space_tokens = None

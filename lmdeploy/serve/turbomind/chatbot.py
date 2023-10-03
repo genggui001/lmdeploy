@@ -612,7 +612,7 @@ class Chatbot:
         Yields:
             tuple: status, text, generated token number
         """
-        status, res, n_token = None, '', 0
+        status, res, n_token, n_text = None, '', 0, 0
         while True:
             result = res_queue.get()
             if result is None:
@@ -655,10 +655,12 @@ class Chatbot:
                            'postprocessing is ignored during profiling '
                            'token generation', output_ids.shape[-1])
                     continue
-                output_str = postprocess(
-                    output_ids, np.array([[n_token]], dtype=np.uint32))
                 n_token = output_ids.shape[-1]
-                text = output_str[0].decode()
+                output_str = postprocess(
+                    output_ids, np.array([[0]], dtype=np.uint32)
+                )[0].decode().strip(chr(65533))
+                text = output_str[n_text:]
+                n_text = len(output_str)
                 if display:
                     print(text, end='', flush=True)
                 session.response += text

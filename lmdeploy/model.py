@@ -574,6 +574,66 @@ class CodeLlama(Llama2):
         return super().messages2prompt(messages, sequence_start)
 
 
+@MODELS.register_module(name='med_puyu')
+class MedPuyu(BaseModel):
+    """Chat template of puyu model.This is only for internal usage in Shanghai
+    AI Laboratory."""
+
+    def __init__(self,
+                 session_len=16384,
+                 meta_instruction='',
+                 system='',
+                 eosys='',
+                 user='',
+                 eoh='',
+                 assistant='',
+                 eoa='',
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.session_len = session_len
+        self.meta_instruction = meta_instruction
+        self.system = system
+        self.user = user
+        self.assistant = assistant
+        self.eosys = eosys
+        self.eoh = eoh
+        self.eoa = eoa
+        self.stop_words = ['<|im_end|>']
+
+    def decorate_prompt(self, prompt, sequence_start=True):
+        assert self.capability == 'chat', \
+            f'{type(self).__name__} has no capability of {self.capability}'
+        if sequence_start:
+            return f'<s>{self.system}{self.meta_instruction}{self.eosys}' \
+                   f'{self.user}{prompt}{self.eoh}' \
+                   f'{self.assistant}'
+        else:
+            return f'{self.eoa}{self.user}{prompt}{self.eoh}{self.assistant}'
+
+    def messages2prompt(self, messages, sequence_start=True):
+        """Return the prompt that is concatenated with other elements in the
+        chat template.
+
+        Args:
+            messages (str | List): user's input prompt
+            sequence_start (bool): flag to start the sequence
+        Returns:
+            str: the concatenated prompt
+        """
+        if isinstance(messages, str):
+            return self.get_prompt(messages, sequence_start)
+        system, users, assistants = self._translate_messages(messages)
+        system = self.system if not system else system
+        ret = f'<s>{system}{self.meta_instruction}{self.eosys}'
+        for user, assistant in zip(users, assistants):
+            if assistant:
+                ret += f'{self.user}{user}{self.eoh}{self.assistant}' \
+                       f'{assistant}{self.eoa}'
+            else:
+                ret += f'{self.user}{user}{self.eoh}{self.assistant}'
+        return ret
+
+
 def main(model_name: str = 'test'):
     assert model_name in MODELS.module_dict.keys(), \
         f"'{model_name}' is not supported. " \

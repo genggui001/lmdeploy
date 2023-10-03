@@ -72,3 +72,9 @@ work_dir*/
 *.out
 *.csv
 *.pkl
+
+build.sh
+calibrate.sh
+run_tritonserver.sh
+test.ipynb
+to_deploy.sh
