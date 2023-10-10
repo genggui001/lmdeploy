@@ -1,4 +1,5 @@
 # Copyright (c) genggui001. All rights reserved.
+from curses.ascii import HT
 import os
 import json
 import time
@@ -9,12 +10,15 @@ from lmdeploy.serve.turbomind.chatbot import Chatbot, StatusCode, get_logger
 
 from flask import Flask, Response, stream_with_context
 from flask_pydantic import validate
-from werkzeug.exceptions import HTTPException
+from werkzeug.exceptions import HTTPException, BadRequest, InternalServerError
 
 app = Flask(__name__)
 
 log_level = os.environ.get('SERVICE_LOG_LEVEL', 'INFO')
-tritonserver_addr = os.environ.get('TRITONSERVER_ADDR')
+TRITONSERVER_ADDR = os.environ.get('TRITONSERVER_ADDR')
+SESSION_LEN = int(os.environ.get('SESSION_LEN', "-1"))
+
+assert SESSION_LEN > 0
 
 logger = get_logger(log_level=log_level)
 
@@ -62,6 +66,25 @@ class CompletionStreamResponse(BaseModel):
     model: str
 
 
+app.config['TRAP_HTTP_EXCEPTIONS'] = True
+@app.errorhandler(HTTPException)
+def handle_exception(e: HTTPException):
+    """Return JSON instead of HTML for HTTP errors."""
+    # start with the correct headers and status code from the error
+    response = e.get_response()
+    # replace the body with JSON
+    response.data = json.dumps({
+        "error": {
+            "message": e.description,
+            "type": e.name,
+            "code": e.code,
+            "param": None,
+        }
+    }, ensure_ascii=False)
+    response.content_type = "application/json"
+    return response
+
+
 @app.post('/v1/completions')
 @validate()
 def completions_v1(
@@ -70,13 +93,14 @@ def completions_v1(
     assert body.n == 1
 
     chatbot = Chatbot(
-        tritonserver_addr,
+        TRITONSERVER_ADDR,
         log_level=log_level,
         display=False,
         temperature=body.temperature,
         top_p=body.top_p,
         top_k=body.top_k,
-        repetition_penalty=body.repetition_penalty
+        repetition_penalty=body.repetition_penalty,
+        session_len=SESSION_LEN,
     )
     session_id = random.randint(100000, 9999999)
 
@@ -97,10 +121,10 @@ def completions_v1(
         ):
             
             if status == StatusCode.TRITON_SESSION_OUT_OF_LIMIT:
-                raise HTTPException(code=400, description="request length out of limit")
+                raise BadRequest(description="request length out of limit")
             
             if status == StatusCode.TRITON_SERVER_ERR:
-                raise HTTPException(code=401, description=res)
+                raise InternalServerError(description=str(res))
             
             finish_reason = None
             if status == StatusCode.TRITON_STREAM_END:
@@ -116,25 +140,45 @@ def completions_v1(
 
 
     if body.stream == True:
+
         # stream
-        def stream_generator():
+        def stream_generator(context_iter, choice):
             try:
-                for choice in generate(redata_index=0):
+                while True:
                     response = CompletionStreamResponse(
                         id=str(session_id),
                         choices=[choice],
                         model=body.model
                     )
                     yield f'data: {response.json(ensure_ascii=False)}\n\n'.encode("utf8")
-                
+
+                    try:
+                        choice = next(context_iter)
+                    except StopIteration:
+                        # out
+                        break
+
                 yield 'data: [DONE]\n\n'
 
             except GeneratorExit:
                 # cancel
                 chatbot.cancel(session_id=session_id)
-                logger.info(f"session_id = {session_id} stop")
+                logger.info(f"session_id = {session_id} stop") 
+            
+            # 关闭迭代器
+            context_iter.close()
+            del choice
+        
+        context_iter = generate(redata_index=0)
+        try:
+            first_item = next(context_iter)
+        except Exception as e:
+            # 关闭迭代器
+            context_iter.close()
+            raise e
 
-        return Response(stream_with_context(stream_generator()))
+        return Response(response=stream_with_context(stream_generator(context_iter, first_item)), status=200)
+
     else:
         usage_info = UsageInfo(
             prompt_tokens=0,

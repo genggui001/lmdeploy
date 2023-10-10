@@ -463,10 +463,15 @@ class Chatbot:
         if self.profile_generation:
             yield StatusCode.TRITON_STREAM_ING, \
                   'ignore preprocessing during profiling generation', 0
+            
         if request_output_len is None:
-            request_output_len = max(
-                128,
-                self.cfg.session_len - session.sequence_length - input_tokens)
+            request_output_len = self.cfg.session_len
+        
+        # min request_output_len is 1
+        request_output_len = max(min(
+            request_output_len,
+            self.cfg.session_len - session.sequence_length - input_tokens,
+        ), 1)
 
         if input_tokens + request_output_len + \
                 session.sequence_length > self.cfg.session_len:
