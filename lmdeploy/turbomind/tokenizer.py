@@ -123,7 +123,7 @@ class HuggingFaceTokenizer:
             model_dir,
             trust_remote_code=True,
             use_fast=False,
-            use_legacy=True,
+            legacy=True,
         )
         self.need_padding = isinstance(self.model, LlamaTokenizerFast) \
             or isinstance(self.model, CodeLlamaTokenizerFast)
