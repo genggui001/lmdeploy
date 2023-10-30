@@ -588,6 +588,7 @@ class MedPuyu(BaseModel):
                  eoh='',
                  assistant='',
                  eoa='',
+                 add_eos=True,
                  **kwargs):
         super().__init__(**kwargs)
         self.session_len = session_len
@@ -598,40 +599,39 @@ class MedPuyu(BaseModel):
         self.eosys = eosys
         self.eoh = eoh
         self.eoa = eoa
+        self.add_eos = add_eos
         self.stop_words = ['<|im_end|>']
 
     def decorate_prompt(self, prompt, sequence_start=True):
         assert self.capability == 'chat', \
             f'{type(self).__name__} has no capability of {self.capability}'
-        if sequence_start:
-            return f'<s>{self.system}{self.meta_instruction}{self.eosys}' \
-                   f'{self.user}{prompt}{self.eoh}' \
-                   f'{self.assistant}'
+        if sequence_start and self.add_eos:
+            return f'<s>{prompt}' 
         else:
-            return f'{self.eoa}{self.user}{prompt}{self.eoh}{self.assistant}'
+            return f'{prompt}' 
 
-    def messages2prompt(self, messages, sequence_start=True):
-        """Return the prompt that is concatenated with other elements in the
-        chat template.
+    # def messages2prompt(self, messages, sequence_start=True):
+    #     """Return the prompt that is concatenated with other elements in the
+    #     chat template.
 
-        Args:
-            messages (str | List): user's input prompt
-            sequence_start (bool): flag to start the sequence
-        Returns:
-            str: the concatenated prompt
-        """
-        if isinstance(messages, str):
-            return self.get_prompt(messages, sequence_start)
-        system, users, assistants = self._translate_messages(messages)
-        system = self.system if not system else system
-        ret = f'<s>{system}{self.meta_instruction}{self.eosys}'
-        for user, assistant in zip(users, assistants):
-            if assistant:
-                ret += f'{self.user}{user}{self.eoh}{self.assistant}' \
-                       f'{assistant}{self.eoa}'
-            else:
-                ret += f'{self.user}{user}{self.eoh}{self.assistant}'
-        return ret
+    #     Args:
+    #         messages (str | List): user's input prompt
+    #         sequence_start (bool): flag to start the sequence
+    #     Returns:
+    #         str: the concatenated prompt
+    #     """
+    #     if isinstance(messages, str):
+    #         return self.get_prompt(messages, sequence_start)
+    #     system, users, assistants = self._translate_messages(messages)
+    #     system = self.system if not system else system
+    #     ret = f'<s>{system}{self.meta_instruction}{self.eosys}'
+    #     for user, assistant in zip(users, assistants):
+    #         if assistant:
+    #             ret += f'{self.user}{user}{self.eoh}{self.assistant}' \
+    #                    f'{assistant}{self.eoa}'
+    #         else:
+    #             ret += f'{self.user}{user}{self.eoh}{self.assistant}'
+    #     return ret
 
 
 def main(model_name: str = 'test'):

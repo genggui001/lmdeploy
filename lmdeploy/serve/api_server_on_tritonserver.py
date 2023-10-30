@@ -1,5 +1,4 @@
 # Copyright (c) genggui001. All rights reserved.
-from curses.ascii import HT
 import os
 import json
 import time
@@ -17,6 +16,7 @@ app = Flask(__name__)
 log_level = os.environ.get('SERVICE_LOG_LEVEL', 'INFO')
 TRITONSERVER_ADDR = os.environ.get('TRITONSERVER_ADDR')
 SESSION_LEN = int(os.environ.get('SESSION_LEN', "-1"))
+ADD_EOS = (os.environ.get('ADD_EOS', "1") == '1')
 
 assert SESSION_LEN > 0
 
@@ -101,6 +101,7 @@ def completions_v1(
         top_k=body.top_k,
         repetition_penalty=body.repetition_penalty,
         session_len=SESSION_LEN,
+        add_eos=ADD_EOS,
     )
     session_id = random.randint(100000, 9999999)
 
