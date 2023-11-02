@@ -1,7 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from functools import partial
 from typing import Union
-
+from tqdm.auto import tqdm
 import torch
 from torch import nn
 from transformers import PreTrainedTokenizer
@@ -159,7 +159,15 @@ class CalibrationContext():
             k_obs = KVCacheObserver.find(m_name, group=self.key_obs_group)
             v_obs = KVCacheObserver.find(m_name, group=self.value_obs_group)
 
-            for i in range(len(batch_args)):
+            for i in tqdm(range(len(batch_args))):
+                # data to gpu
+                for a_i in range(len(batch_args[i])):
+                    if torch.is_tensor(batch_args[i][a_i]):
+                        batch_args[i][a_i] = batch_args[i][a_i].to(self.device)
+                
+                for k in batch_kwargs[i].keys():
+                    if torch.is_tensor(batch_kwargs[i][k]):
+                        batch_kwargs[i][k] = batch_kwargs[i][k].to(self.device)
 
                 if k_obs and v_obs:
                     batch_kwargs[i]['use_cache'] = True
@@ -167,15 +175,34 @@ class CalibrationContext():
                                                   **batch_kwargs[i])
                     out = list(out)
                     key, value = out.pop(-1)
+                    key = key.to('cpu')
+                    value = value.to('cpu')
+
                     k_obs.observe(key)
                     v_obs.observe(value)
 
                     del key, value
-                    torch.cuda.empty_cache()
-                    batch_outputs.append(tuple(out))
+                    batch_outputs.append([o.to('cpu') for o in out])
                 else:
-                    batch_outputs.append(self._ori_forwards[mod](
-                        *batch_args[i], **batch_kwargs[i]))
+                    batch_outputs.append(
+                        [   
+                            o.to('cpu')
+                            for o in self._ori_forwards[mod](
+                                *batch_args[i], **batch_kwargs[i]
+                            )
+                        ]
+                    )
+                
+                # data to cpu
+                for a_i in range(len(batch_args[i])):
+                    if torch.is_tensor(batch_args[i][a_i]):
+                        batch_args[i][a_i] = batch_args[i][a_i].to('cpu')
+                
+                for k in batch_kwargs[i].keys():
+                    if torch.is_tensor(batch_kwargs[i][k]):
+                        batch_kwargs[i][k] = batch_kwargs[i][k].to('cpu')
+                
+                torch.cuda.empty_cache()
 
             outputs = concat_decoder_layer_outputs(batch_outputs)
 
@@ -298,6 +325,15 @@ class CalibrationContext():
         self._insert_output_observers()
         self._wrap_decoder_layers()
 
+        # norm change
+        if type(self.model).__name__ == 'QWenLMHeadModel':
+            model = self.model.transformer
+        else:
+            model = self.model.model
+        
+        self._norm_old_forward = model.norm.forward
+        model.norm.forward = lambda h: h
+
     def __exit__(self, exc_type, exc_value, traceback):
         """Clean up after a 'with' statement by removing registered hooks,
         restoring original forward methods, and if no exception occurred,
@@ -307,3 +343,11 @@ class CalibrationContext():
 
         for layer in self.name2layer.values():
             layer.forward = self._ori_forwards[layer]
+        
+        # norm change
+        if type(self.model).__name__ == 'QWenLMHeadModel':
+            model = self.model.transformer
+        else:
+            model = self.model.model
+            
+        model.norm.forward = self._norm_old_forward
