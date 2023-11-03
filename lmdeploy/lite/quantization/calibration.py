@@ -331,8 +331,9 @@ class CalibrationContext():
         else:
             model = self.model.model
         
-        self._norm_old_forward = model.norm.forward
-        model.norm.forward = lambda h: h
+        del model.norm
+        model.norm = lambda h: h
+
 
     def __exit__(self, exc_type, exc_value, traceback):
         """Clean up after a 'with' statement by removing registered hooks,
@@ -344,10 +345,4 @@ class CalibrationContext():
         for layer in self.name2layer.values():
             layer.forward = self._ori_forwards[layer]
         
-        # norm change
-        if type(self.model).__name__ == 'QWenLMHeadModel':
-            model = self.model.transformer
-        else:
-            model = self.model.model
-            
-        model.norm.forward = self._norm_old_forward
+
