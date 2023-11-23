@@ -58,6 +58,7 @@ work_dir*/
 *.bin
 *config.json
 *generate_config.json
+!lmdeploy/turbomind/hf_repo/config.json
 
 # Pytorch
 *.pth
@@ -80,3 +81,4 @@ test.ipynb
 to_deploy.sh
 install_apex.sh
 to_deploy_awq_13b.sh
+!CMakeLists.txt

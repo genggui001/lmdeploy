@@ -19,3 +19,7 @@ pydantic==1.10.4
 gunicorn==21.2.0
 Flask==2.3.3
 Flask-Pydantic==0.11.0
+-r requirements/build.txt
+-r requirements/runtime.txt
+-r requirements/lite.txt
+-r requirements/serve.txt

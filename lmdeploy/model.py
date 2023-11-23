@@ -111,6 +111,7 @@ class BaseModel:
                              repetition_penalty=self.repetition_penalty)
 
 
+@MODELS.register_module(name='wizardlM')
 @MODELS.register_module(name='vicuna')
 class Vicuna(BaseModel):
     """Chat template of vicuna model."""
@@ -173,15 +174,16 @@ class InternLMChat7B(BaseModel):
 
     def __init__(
             self,
-            system='<|System|>',
+            system='<|System|>:',
             meta_instruction="""You are an AI assistant whose name is InternLM (书生·浦语).
 - InternLM (书生·浦语) is a conversational language model that is developed by Shanghai AI Laboratory (上海人工智能实验室). It is designed to be helpful, honest, and harmless.
 - InternLM (书生·浦语) can understand and communicate fluently in the language chosen by the user such as English and 中文.
 """,  # noqa: E501
-            user='<|User|>',
-            eoh='',
-            eoa='<eoa>',
-            assistant='<|Bot|>',
+            user='<|User|>:',
+            eoh='\n',
+            eoa='<eoa>\n',
+            eosys='\n',
+            assistant='<|Bot|>:',
             stop_words=['<eoa>'],
             **kwargs):
         super().__init__(**kwargs)
@@ -190,6 +192,7 @@ class InternLMChat7B(BaseModel):
         self.user = user
         self.eoh = eoh
         self.eoa = eoa
+        self.eosys = eosys
         self.assistant = assistant
         self.stop_words = stop_words
 
@@ -207,12 +210,12 @@ class InternLMChat7B(BaseModel):
         assert self.capability == 'chat', \
             f'{type(self).__name__} has no capability of {self.capability}'
         if sequence_start:
-            return f'<BOS>{self.system}:{self.meta_instruction}\n' \
-                   f'{self.user}:{prompt}{self.eoh}\n' \
-                   f'{self.assistant}:'
+            return f'{self.system}{self.meta_instruction}{self.eosys}' \
+                   f'{self.user}{prompt}{self.eoh}' \
+                   f'{self.assistant}'
         else:
-            return f'\n{self.user}:{prompt}{self.eoh}\n' \
-                   f'{self.assistant}:'
+            return f'\n{self.user}{prompt}{self.eoh}' \
+                   f'{self.assistant}'
 
     def messages2prompt(self, messages, sequence_start=True):
         """Return the prompt that is concatenated with other elements in the
@@ -223,17 +226,19 @@ class InternLMChat7B(BaseModel):
         Returns:
             str: the concatenated prompt
         """
+
         if isinstance(messages, str):
             return self.get_prompt(messages, sequence_start)
-        system, users, assistants = self._translate_messages(messages)
-        system = self.meta_instruction if not system else system
-        ret = f'<BOS>{self.system}:{system}\n'
-        for user, assistant in zip(users, assistants):
-            if assistant:
-                ret += f'{self.user}:{user}{self.eoh}\n{self.assistant}:' \
-                       f'{assistant}{self.eoa}\n'
-            else:
-                ret += f'{self.user}:{user}{self.eoh}\n{self.assistant}:'
+        eox_map = dict(user=self.eoh, assistant=self.eoa, system=self.eosys)
+        ret = ''
+        if self.meta_instruction:
+            ret += f'{self.system}:{self.meta_instruction}{self.eosys}'
+
+        for message in messages:
+            role = message['role']
+            content = message['content']
+            ret += f'{eval(f"self.{role}")}{content}{eox_map[role]}'
+        ret += f'{self.assistant}:'
         return ret
 
 
@@ -350,7 +355,7 @@ class Puyu(BaseModel):
         assert self.capability == 'chat', \
             f'{type(self).__name__} has no capability of {self.capability}'
         if sequence_start:
-            return f'<BOS>{self.system}{self.meta_instruction}{self.eosys}' \
+            return f'{self.system}{self.meta_instruction}{self.eosys}' \
                    f'{self.user}{prompt}{self.eoh}' \
                    f'{self.assistant}'
         else:
@@ -368,15 +373,16 @@ class Puyu(BaseModel):
         """
         if isinstance(messages, str):
             return self.get_prompt(messages, sequence_start)
-        system, users, assistants = self._translate_messages(messages)
-        system = self.system if not system else system
-        ret = f'<BOS>{system}{self.meta_instruction}{self.eosys}'
-        for user, assistant in zip(users, assistants):
-            if assistant:
-                ret += f'{self.user}{user}{self.eoh}{self.assistant}' \
-                       f'{assistant}{self.eoa}'
-            else:
-                ret += f'{self.user}{user}{self.eoh}{self.assistant}'
+        eox_map = dict(user=self.eoh, assistant=self.eoa, system=self.eosys)
+        ret = ''
+        if self.meta_instruction:
+            ret += f'{self.system}{self.meta_instruction}{self.eosys}'
+
+        for message in messages:
+            role = message['role']
+            content = message['content']
+            ret += f'{eval(f"self.{role}")}{content}{eox_map[role]}'
+        ret += f'{self.assistant}'
         return ret
 
 
@@ -418,7 +424,7 @@ If a question does not make any sense, or is not factually coherent, explain why
         assert self.capability == 'chat', \
             f'{type(self).__name__} has no capability of {self.capability}'
         if sequence_start:
-            return f'<BOS>{self.b_inst} ' \
+            return f'{self.b_inst} ' \
                    f'{self.b_sys} {self.default_sys_prompt} {self.e_sys}' \
                    f'{prompt} {self.e_inst} '
 
@@ -437,7 +443,7 @@ If a question does not make any sense, or is not factually coherent, explain why
             return self.get_prompt(messages, sequence_start)
         system, users, assistants = self._translate_messages(messages)
         system = self.default_sys_prompt if not system else system
-        ret = f'<BOS>{self.b_inst} {self.b_sys} {system} {self.e_sys}'
+        ret = f'{self.b_inst} {self.b_sys} {system} {self.e_sys}'
         for i, (user, assistant) in enumerate(zip(users, assistants)):
             if i != 0:
                 ret += f'{self.b_inst} '
@@ -448,6 +454,7 @@ If a question does not make any sense, or is not factually coherent, explain why
         return ret
 
 
+@MODELS.register_module(name='qwen-14b')
 @MODELS.register_module(name='qwen-7b')
 class Qwen7BChat(BaseModel):
     """Chat template for Qwen-7B-Chat."""
@@ -552,16 +559,16 @@ class CodeLlama(Llama2):
         prefix, suffix = prompt.split('<FILL>')
         if self.suffix_first:
             # format as "<PRE> <SUF>{suf} <MID> {pre}"
-            prompt = f'<BOS><PRE> <SUF>{suffix} <MID> {prefix}'
+            prompt = f'<PRE> <SUF>{suffix} <MID> {prefix}'
         else:
             # format as "<PRE> {pre} <SUF>{suf} <MID>"
-            prompt = f'<BOS><PRE> {prefix} <SUF>{suffix} <MID>'
+            prompt = f'<PRE> {prefix} <SUF>{suffix} <MID>'
         return prompt
 
     def _get_prompt(self, prompt, sequence_start):
         prompt = prompt.strip()
         if sequence_start:
-            return f'<BOS>{self.b_inst} ' \
+            return f'{self.b_inst} ' \
                    f'{self.b_sys}{self.default_sys_prompt}{self.e_sys}' \
                    f'{prompt} {self.e_inst}'
 
@@ -633,6 +640,140 @@ class MedPuyu(BaseModel):
     #             ret += f'{self.user}{user}{self.eoh}{self.assistant}'
     #     return ret
 
+@MODELS.register_module(name='solar')
+class SOLAR(BaseModel):
+    """Chat template of SOLAR model.
+
+    `https://huggingface.co/upstage/SOLAR-0-70b-16bit`
+    """
+
+    def __init__(self,
+                 b_sys='### System:\n',
+                 e_sys='\n\n',
+                 user='### User:\n',
+                 eoh='\n\n',
+                 assistant='### Assistant:\n',
+                 eoa='\n\n',
+                 system='',
+                 session_len=2048,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.b_sys = b_sys
+        self.e_sys = e_sys
+        self.user = user
+        self.eoh = eoh
+        self.assistant = assistant
+        self.eoa = eoa
+        self.system = system
+        self.session_len = session_len
+
+    def decorate_prompt(self, prompt, sequence_start=True):
+        """Return the prompt that is concatenated with other elements in the
+        chat template.
+
+        Args:
+            prompt (str): user's input prompt
+            sequence_start (bool): indicator for the first round chat of a
+               session sequence
+        Returns:
+            str: the concatenated prompt
+        """
+        assert self.capability == 'chat', \
+            f'{type(self).__name__} has no capability of {self.capability}'
+        if sequence_start:
+            return f'{self.b_sys}{self.system}{self.e_sys}' \
+                   f'{self.user}{prompt}{self.eoh}{self.assistant}'
+
+        return f'{self.user}{prompt}{self.eoh}{self.assistant}'
+
+    def messages2prompt(self, messages, sequence_start=True):
+        """Return the prompt that is concatenated with other elements in the
+        chat template.
+
+        Args:
+            messages (str | List): user's input prompt
+        Returns:
+            str: the concatenated prompt
+        """
+        if isinstance(messages, str):
+            return self.get_prompt(messages, sequence_start)
+        system, users, assistants = self._translate_messages(messages)
+        system = self.system if not system else system
+        ret = f'{self.b_sys}{system}{self.e_sys}'
+        for i, (user, assistant) in enumerate(zip(users, assistants)):
+            ret += f'{self.user}{user}{self.eoh}{self.assistant}'
+            if assistant:
+                ret += f'{assistant}{self.eoa}'
+        return ret
+
+
+@MODELS.register_module(name='ultracm')
+@MODELS.register_module(name='ultralm')
+class UltraChat(BaseModel):
+    """Template of UltraCM and UltraLM models.
+
+    `https://huggingface.co/openbmb/UltraCM-13b`
+    `https://huggingface.co/openbmb/UltraLM-13b`
+    """
+
+    def __init__(
+            self,
+            system="""User: A one-turn chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, very detailed, and polite answers to the user's questions.</s>""",  # noqa: E501
+            eos='</s>',
+            user='User: ',
+            assistant='Assistant: ',
+            session_len=2048,
+            **kwargs):
+        super().__init__(**kwargs)
+        self.system = system
+        self.eos = eos
+        self.session_len = session_len
+        self.user = user
+        self.assistant = assistant
+
+    def decorate_prompt(self, prompt, sequence_start=True):
+        """Return the prompt that is concatenated with other elements in the
+        chat template.
+
+        Args:
+            prompt (str): the input prompt
+            sequence_start (bool): indicator for the first round chat of a
+               session sequence
+        Returns:
+            str: the concatenated prompt
+        """
+        assert self.capability == 'chat', \
+            f'{type(self).__name__} has no capability of {self.capability}'
+        if sequence_start:
+            return f'{self.system}\n{self.user}{prompt}{self.eos}' \
+                   f'\n{self.assistant}'
+
+        return f'\n{self.user}{prompt}{self.eos}' \
+               f'\n{self.assistant}'
+
+    def messages2prompt(self, messages, sequence_start=True):
+        """Return the prompt that is concatenated with other elements in the
+        chat template. Only evaluate the last instruction completion pair.
+
+        Args:
+            messages (str | List): user's input prompt
+        Returns:
+            str: the concatenated prompt
+        """
+        if isinstance(messages, str):
+            return self.get_prompt(messages, sequence_start)
+        system, users, assistants = self._translate_messages(messages)
+        system = self.system if not system else system
+        ret = f'{system}'
+        for user, assistant in zip(users, assistants):
+            if assistant:
+                ret += f'\n{self.user}{user}{self.eos}' \
+                       f'\n{self.assistant}{assistant}{self.eos}'
+            else:
+                ret += f'\n{self.user}{user}{self.eos}' \
+                       f'\n{self.assistant}'
+        return ret
+
 
 def main(model_name: str = 'test'):
     assert model_name in MODELS.module_dict.keys(), \
@@ -646,4 +787,5 @@ def main(model_name: str = 'test'):
 
 if __name__ == '__main__':
     import fire
+
     fire.Fire(main)

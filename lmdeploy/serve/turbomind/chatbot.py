@@ -459,6 +459,14 @@ class Chatbot:
             session.sequence_length = 0
 
         input_ids, input_lengths = self.preprocess(prompt)
+        # got input_ids with default add_bos == True
+        if not sequence_start and input_ids[0][0] == self.bos_id:
+            input_ids = input_ids[:, 1:]
+            input_lengths = input_lengths - 1
+        # will crash if last_token_id == eos_id and send empty input_ids
+        if sequence_end and request_output_len == 0:
+            input_ids = np.array([[1]], dtype=np.uint32)
+            input_lengths = np.array([[1]], dtype=np.uint32)
         input_tokens = input_lengths.squeeze()
         if self.profile_generation:
             yield StatusCode.TRITON_STREAM_ING, \
@@ -660,12 +668,15 @@ class Chatbot:
                            'postprocessing is ignored during profiling '
                            'token generation', output_ids.shape[-1])
                     continue
-                n_token = output_ids.shape[-1]
                 output_str = postprocess(
-                    output_ids, np.array([[0]], dtype=np.uint32)
-                )[0].decode().strip(chr(65533))
-                text = output_str[n_text:]
-                n_text = len(output_str)
+                    output_ids, np.array([[n_token]], dtype=np.uint32))
+                text = output_str[0].decode()
+                # utf-8 char at the end means it's a potential unfinished
+                # byte sequence, continue to concate it with the next
+                # sequence and decode them together
+                if text.endswith('�'):
+                    continue
+                n_token = output_ids.shape[-1]
                 if display:
                     print(text, end='', flush=True)
                 session.response += text
