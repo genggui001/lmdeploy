@@ -78,3 +78,5 @@ calibrate.sh
 run_tritonserver.sh
 test.ipynb
 to_deploy.sh
+install_apex.sh
+to_deploy_awq_13b.sh
