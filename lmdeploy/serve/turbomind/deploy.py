@@ -92,13 +92,22 @@ def tokenizer_info_sp(model_path: str):
     Returns:
         tuple: vocabulary size, bos token id and eos token id
     """
-    assert os.path.isfile(model_path), model_path
-    sp_model = SentencePieceProcessor(model_file=model_path)
-    # BOS / EOS token IDs
-    n_words = sp_model.vocab_size()
-    bos_id = sp_model.bos_id()
-    eos_id = sp_model.eos_id()
+    if os.path.isfile(model_path):
+        sp_model = SentencePieceProcessor(model_file=model_path)
+        # BOS / EOS token IDs
+        n_words = sp_model.vocab_size()
+        bos_id = sp_model.bos_id()
+        eos_id = sp_model.eos_id()
+
+    else:
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        n_words = len(tokenizer)
+        bos_id = tokenizer.bos_token_id
+        eos_id = tokenizer.eos_token_id
+    
     return n_words, bos_id, eos_id
+
 
 
 def tokenizer_info_qwen(model_dir: str):
@@ -225,7 +234,7 @@ def export(model_name: str,
         # parameters for turbomind
         max_batch_size=32,
         max_context_token_num=4,
-        session_len=model.session_len + 8,
+        session_len=model.session_len,
         step_length=1,
         cache_max_entry_count=48,
         cache_chunk_size=1,
@@ -408,8 +417,8 @@ def deploy_hf(model_name: str, model_path: str, tokenizer_path: str,
             shutil.copy(osp.join(root_path, 'turbomind/tokenizer.py'),
                         osp.join(triton_models_path, 'tokenizer'))
     else:
-        print(f'tokenizer model {tokenizer_path} does not exist')
-        exit(-1)
+        print(f'tokenizer model {tokenizer_path} does not exist, will use {model_path}')
+        tokenizer_path = model_path
 
     # read model arguments from params.json
     try:
