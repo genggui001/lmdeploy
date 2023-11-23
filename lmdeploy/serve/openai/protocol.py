@@ -28,7 +28,7 @@ class ModelPermission(BaseModel):
     allow_fine_tuning: bool = False
     organization: str = '*'
     group: Optional[str] = None
-    is_blocking: str = False
+    is_blocking: bool = False
 
 
 class ModelCard(BaseModel):
@@ -70,7 +70,7 @@ class ChatCompletionRequest(BaseModel):
     user: Optional[str] = None
     # additional argument of lmdeploy
     repetition_penalty: Optional[float] = 1.0
-    renew_session: Optional[bool] = False
+    session_id: Optional[int] = -1
     ignore_eos: Optional[bool] = False
 
 
@@ -135,6 +135,10 @@ class CompletionRequest(BaseModel):
     presence_penalty: Optional[float] = 0.0
     frequency_penalty: Optional[float] = 0.0
     user: Optional[str] = None
+    # additional argument of lmdeploy
+    repetition_penalty: Optional[float] = 1.0
+    session_id: Optional[int] = -1
+    ignore_eos: Optional[bool] = False
 
 
 class CompletionResponseChoice(BaseModel):
@@ -175,7 +179,7 @@ class CompletionStreamResponse(BaseModel):
 class EmbeddingsRequest(BaseModel):
     """Embedding request."""
     model: str = None
-    input: Union[str, List[Any]]
+    input: Union[str, List[str]]
     user: Optional[str] = None
 
 
@@ -190,9 +194,8 @@ class EmbeddingsResponse(BaseModel):
 class GenerateRequest(BaseModel):
     """Generate request."""
     prompt: Union[str, List[Dict[str, str]]]
-    instance_id: int = -1
-    sequence_start: bool = True
-    sequence_end: bool = False
+    session_id: int = -1
+    interactive_mode: bool = False
     stream: bool = False
     stop: bool = False
     request_output_len: int = 512
@@ -201,3 +204,10 @@ class GenerateRequest(BaseModel):
     temperature: float = 0.8
     repetition_penalty: float = 1.0
     ignore_eos: bool = False
+
+
+class GenerateResponse(BaseModel):
+    """Generate response."""
+    text: str
+    tokens: int
+    finish_reason: Optional[Literal['stop', 'length']] = None

@@ -18,7 +18,7 @@ dequant: f = q * scale + zp
 把 huggingface 格式的模型，转成 turbomind 推理格式，得到一个 workspace 目录
 
 ```bash
-python3 -m lmdeploy.serve.turbomind.deploy internlm-chat-7b /path/to/internlm-chat-7b
+lmdeploy convert internlm-chat-7b /path/to/internlm-chat-7b
 ```
 
 如果已经有 workspace 目录，可以跳过这步。
@@ -29,7 +29,7 @@ python3 -m lmdeploy.serve.turbomind.deploy internlm-chat-7b /path/to/internlm-ch
 
 ```bash
 # 计算 minmax
-python3 -m lmdeploy.lite.apis.calibrate \
+lmdeploy lite calibrate \
   --model $HF_MODEL \
   --calib_dataset 'c4' \             # 校准数据集，支持 c4, ptb, wikitext2, pileval
   --calib_samples 128 \              # 校准集的样本数，如果显存不够，可以适当调小
@@ -37,7 +37,7 @@ python3 -m lmdeploy.lite.apis.calibrate \
   --work_dir $WORK_DIR \             # 保存 Pytorch 格式量化统计参数和量化后权重的文件夹
 
 # 通过 minmax 获取量化参数
-python3 -m lmdeploy.lite.apis.kv_qparams \
+lmdeploy lite kv_qparams \
   --work_dir $WORK_DIR  \                             # 上一步的结果
   --turbomind_dir workspace/triton_models/weights/ \ # 保存量化参数的目录，推理要用
   --kv_sym False \                                    # 对称量化或非对称量化，默认为 False
@@ -52,24 +52,19 @@ python3 -m lmdeploy.lite.apis.kv_qparams \
 
 修改 `workspace/triton_models/weights/config.ini`：
 
-- use_context_fmha 改为 0，表示关闭 flashattention
 - quant_policy 设置为 4。表示打开 kv_cache int8
-
-这是因为 flashattention 有 v1、v2 两个版本，kv cache int8 曾经也实现过对称版本。
-
-排列组合需要实现 4 套 kernel，在算法不确定的时候过早优化，对软件来说是场灾难。
 
 ### **第四步**
 
 测试聊天效果
 
 ```bash
-python3 -m lmdeploy.turbomind.chat ./workspace
+lmdeploy chat turbomind ./workspace
 ```
 
 ## 显存测试
 
-测试对象为 [internlm-chat-7b](https://huggingface.co/internlm/internlm-chat-7b) 模型。
+测试对象为 [internlm-chat-7b](https://huggingface.co/internlm/internlm-chat-7b-v1_1) 模型。
 测试方法：
 
 1. 使用 `deploy.py` 转换模型，修改 `workspace` 配置中的最大并发数；调整 `llama_config.ini` 中的请求数
@@ -93,7 +88,7 @@ python3 -m lmdeploy.turbomind.chat ./workspace
 
 ## 精度测试
 
-测试对象为 [internlm-chat-7b](https://huggingface.co/internlm/internlm-chat-7b) 指令模型。
+测试对象为 [internlm-chat-7b](https://huggingface.co/internlm/internlm-chat-7b-v1_1) 指令模型。
 
 以下是 `kCacheKVInt8` 方法仅从 c4 数据集，随机选择 128 条数据 PTQ 量化。量化前后均使用 [opencompass](https://github.com/InternLM/opencompass) 测试精度。
 
