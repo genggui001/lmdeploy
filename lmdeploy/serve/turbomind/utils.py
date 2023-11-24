@@ -53,7 +53,7 @@ class Preprocessor:
         with grpcclient.InferenceServerClient(self.tritonserver_addr) as \
                 client:
             result = client.infer(self.model_name, inputs)
-            output0 = result.as_numpy('INPUT_ID')
+            output0 = result.as_numpy('INPUT_ID').astype(np.uint32)
             output1 = result.as_numpy('REQUEST_INPUT_LEN')
         return output0, output1
 
