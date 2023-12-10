@@ -463,9 +463,6 @@ class Chatbot:
             input_lengths = np.array([[1]], dtype=np.uint32)
         input_tokens = input_lengths.squeeze()
         
-        if self.profile_generation:
-            yield StatusCode.TRITON_STREAM_ING, \
-                  'ignore preprocessing during profiling generation', 0
             
         if request_output_len is None:
             request_output_len = self.cfg.session_len
