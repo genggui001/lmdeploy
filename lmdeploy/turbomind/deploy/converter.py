@@ -31,7 +31,7 @@ def get_tokenizer_path(model_path: str, tokenizer_path: str):
     if tokenizer_path is not None:
         assert osp.exists(tokenizer_path), f'{tokenizer_path} does not exists.'
         return tokenizer_path
-    candidate = ['tokenizer.model', 'qwen.tiktoken']
+    candidate = ['tokenizer.model', 'qwen.tiktoken', 'tokenizer.json']
     for name in candidate:
         tmp_path = osp.join(model_path, name)
         if osp.exists(tmp_path):

@@ -1,7 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 
 import torch
-from accelerate import infer_auto_device_map, init_empty_weights
+from accelerate import infer_auto_device_map, init_empty_weights, load_checkpoint_in_model
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from lmdeploy.lite.utils import collect_target_modules
@@ -29,8 +29,9 @@ def load_hf_from_pretrained(pretrained_model_name_or_path, **kwargs):
 
     with init_empty_weights():
         # Load model
-        model = AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path, config=hf_config, **kwargs)
+        # model = AutoModelForCausalLM.from_pretrained(
+        #     pretrained_model_name_or_path, config=hf_config, **kwargs)
+        model = AutoModelForCausalLM.from_config(config=hf_config, **kwargs)
         model.config.use_cache = False
     layer_type = LAYER_TYPE_MAP[type(model).__name__]
     decoder_layers = collect_target_modules(model, layer_type)
@@ -42,14 +43,16 @@ def load_hf_from_pretrained(pretrained_model_name_or_path, **kwargs):
             device_map[name] = 'cpu'
         else:
             device_map[name] = 0
-    if 'device_map' in kwargs:
-        kwargs.pop('device_map')
-    with LoadWoInit():
-        model = AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path,
-            device_map=device_map,
-            config=hf_config,
-            **kwargs)
-        model.config.use_cache = False
+    # if 'device_map' in kwargs:
+    #     kwargs.pop('device_map')
+    # with LoadWoInit():
+    #     model = AutoModelForCausalLM.from_pretrained(
+    #         pretrained_model_name_or_path,
+    #         device_map=device_map,
+    #         config=hf_config,
+    #         **kwargs)
+    #     model.config.use_cache = False
+
+    load_checkpoint_in_model(model, hf_config._name_or_path, device_map)
 
     return model
