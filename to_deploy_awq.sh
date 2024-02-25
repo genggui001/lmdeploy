@@ -18,8 +18,7 @@ export NCCL_LAUNCH_MODE=GROUP
 
 export PATH="/mnt/petrelfs/share/gcc/gcc-9.3.0/bin:$MPI_HOME/bin:$PATH" 
 
-HF_MODEL=/mnt/petrelfs/xuekui/code/gpt-neox-genggui001/model_dir/pulse_v11_123b_gpt4_hf
-
+HF_MODEL=/mnt/petrelfs/xuekui/code/gpt-neox-genggui001/model_dir/pulse_v12_123b_gpt4_hf
 # rm -rf $HF_MODEL/int4_awq_triton_tp1_1_a100
 rm -rf $HF_MODEL/int4_awq_triton_tp2_2_a100
 
@@ -33,7 +32,7 @@ rm -rf $HF_MODEL/int4_awq_triton_tp2_2_a100
 #     --dst_path $HF_MODEL/int4_awq_triton_tp1_1_a100
 
 
-python3 -u -m lmdeploy.serve.turbomind.deploy \
+python3 -u -m lmdeploy.turbomind.deploy.converter \
     --model-name med_puyu \
     --model-path $HF_MODEL/int4_awq \
     --model-format awq \
@@ -42,6 +41,12 @@ python3 -u -m lmdeploy.serve.turbomind.deploy \
     --dst_path $HF_MODEL/int4_awq_triton_tp2_2_a100
 
 
+# python3 -u -m lmdeploy.turbomind.deploy.converter \
+#     --model-name med_puyu \
+#     --model-path $HF_MODEL/base \
+#     --model-format hf \
+#     --tp 2 \
+#     --dst_path $HF_MODEL/triton_tp2_2_a100
 
 # HF_MODEL=/mnt/petrelfs/xuekui/code/Megatron-DeepSpeed-Llama/model_dir/tigerbot-13b-base_v9_gpt4_hf
 
