@@ -56,6 +56,7 @@ LlamaV2<T>::LlamaV2(size_t                       head_num,
                     int                          quant_policy,
                     bool                         use_context_fmha,
                     const EngineParams&          engine_params,
+                    const LoraParams&            lora_params,
                     std::shared_ptr<SharedState> shared_state,
                     LlamaWeight<T>*              weights,
                     NcclParam                    tensor_para,
@@ -85,6 +86,7 @@ LlamaV2<T>::LlamaV2(size_t                       head_num,
     is_free_buffer_after_forward_(is_free_buffer_after_forward),
     cuda_device_prop_(cuda_device_prop),
     debug_(isDebug()),
+    lora_params_(lora_params),
     shared_state_(shared_state)
 
 {
@@ -97,6 +99,8 @@ LlamaV2<T>::LlamaV2(size_t                       head_num,
     batch_ = std::make_unique<LlamaBatch<T>>(engine_params, cache_block_seq_len, quant_policy, this);
 
     initialize(attn_params, kv_head_num, use_context_fmha, cache_block_seq_len, quant_policy);
+
+    unified_decoder_->allocateBuffer(engine_params.max_batch_size);
 
     /// TODO: decouple Llama model and batch inference
     batch_->Start();
@@ -129,6 +133,7 @@ void LlamaV2<T>::initialize(const LlamaAttentionParams& attn_params,
                                                  stream_,
                                                  cublas_wrapper_,
                                                  allocator_,
+                                                 lora_params_,
                                                  is_free_buffer_after_forward_,
                                                  use_context_fmha,
                                                  cache_block_seq_len,
@@ -166,9 +171,23 @@ void LlamaV2<T>::embeddingLookup(T* embeddings, const int* token_ids_buf, int ba
 }
 
 template<typename T>
-void LlamaV2<T>::updateEmbedding(T* decoder_input, const int bsz, const int* h_input_length, const Sequence** sequences)
+void LlamaV2<T>::updateEmbedding(T*               decoder_input,
+                                 const int        bsz,
+                                 const int*       h_input_length,
+                                 const Sequence** sequences,
+                                 int              token_num,
+                                 int*             lora_mask,
+                                 bool*            have_embeddings)
 {
     TM_LOG_DEBUG(__PRETTY_FUNCTION__);
+
+    *have_embeddings          = false;
+    int*             mask_ptr = nullptr;
+    std::vector<int> mask;
+    if (lora_mask != nullptr) {
+        mask     = std::vector<int>(token_num);
+        mask_ptr = mask.data();
+    }
 
     for (int i = 0; i < bsz; i++) {
         const auto& seq        = *sequences[i];
@@ -177,17 +196,33 @@ void LlamaV2<T>::updateEmbedding(T* decoder_input, const int bsz, const int* h_i
         for (int j = embeddings.size() - 1; j >= 0; j--) {
             int begin = ranges[j].first;
             int end   = ranges[j].second;
+            if (seq.cache_len + h_input_length[i] - 1 < begin) {
+                continue;
+            }
             if (end <= seq.cache_len) {
                 break;
             }
-            int    off_dst   = std::max(0, begin - seq.cache_len);
-            int    off_src   = std::max(0, seq.cache_len - begin);
+            int off_dst = std::max(0, begin - seq.cache_len);
+            int off_src = std::max(0, seq.cache_len - begin);
+            // calculate intersection of [begin, end) and [seq.cache_len, seq.cache_len + h_input_length[i])
+            begin            = std::max(begin, seq.cache_len);
+            end              = std::min(end, seq.cache_len + h_input_length[i]);
             size_t byte_size = (end - begin) * hidden_units_ * sizeof(T);
             T*     dst_ptr   = decoder_input + off_dst * hidden_units_;
             auto   src_ptr   = embeddings[j].data() + off_src * hidden_units_ * sizeof(T);
             cudaMemcpyAsync(dst_ptr, src_ptr, byte_size, cudaMemcpyDefault, stream_);
+            if (lora_mask != nullptr) {
+                std::fill_n(mask_ptr + off_dst, (end - begin), 1);
+                *have_embeddings = true;
+            }
         }
         decoder_input += h_input_length[i] * hidden_units_;
+        mask_ptr += h_input_length[i];
+    }
+
+    if (lora_mask != nullptr && *have_embeddings) {
+        cudaMemcpyAsync(lora_mask, mask.data(), sizeof(int) * token_num, cudaMemcpyDefault, stream_);
+        cudaStreamSynchronize(stream_);
     }
     sync_check_cuda_error();
 }
@@ -196,26 +231,17 @@ template<typename T>
 void LlamaV2<T>::forwardUnified(T*               out,
                                 T*               decoder_output,
                                 T*               decoder_input,
-                                void**           k_block_ptrs,
-                                void**           v_block_ptrs,
-                                const int*       input_ids,
+                                void**           block_ptrs,
                                 const int*       cu_block_cnts,
+                                const int*       input_ids,
+                                const int*       h_input_length,
+                                const int*       h_context_length,
                                 const float*     rope_theta,
-                                const bool*      dc_finished,
-                                const int*       pf_input_length,
-                                const int*       pf_context_length,
-                                T**              pf_tmp_k_ptrs,
-                                T**              pf_tmp_v_ptrs,
+                                const bool*      finished,
                                 size_t           token_num,
                                 int              dc_batch_size,
-                                int              dc_step,
-                                int              dc_sum_seq_len,
-                                int              dc_max_seq_len,
                                 int              pf_batch_size,
-                                int              pf_max_input_len,
-                                int              pf_max_context_len,
-                                int              pf_session_len,
-                                const int*       h_input_length,
+                                int*             lora_mask,
                                 const Sequence** sequences)
 {
     TM_LOG_DEBUG(__PRETTY_FUNCTION__);
@@ -232,8 +258,14 @@ void LlamaV2<T>::forwardUnified(T*               out,
                                              1,
                                              hidden_units_,
                                              stream_);
-
-    updateEmbedding(decoder_input, dc_batch_size + pf_batch_size, h_input_length, sequences);
+    bool have_embeddings = false;
+    updateEmbedding(decoder_input,
+                    dc_batch_size + pf_batch_size,
+                    h_input_length,
+                    sequences,
+                    token_num,
+                    lora_mask,
+                    &have_embeddings);
 
     sync_check_cuda_error();
 
@@ -242,25 +274,21 @@ void LlamaV2<T>::forwardUnified(T*               out,
 
     TensorMap inputs{{"decoder_input", {MEMORY_GPU, dtype, {token_num, hidden_units_}, decoder_input}},
                      {"output_norm_weight", {MEMORY_GPU, dtype, {hidden_units_}, weights_->output_norm_weight}},
-                     {"input_lengths", {MEMORY_GPU, TYPE_INT32, {bsz}, pf_input_length}},
-                     {"context_lengths", {MEMORY_GPU, TYPE_INT32, {bsz}, pf_context_length}},
+                     {"h_q_len", {MEMORY_CPU, TYPE_INT32, {bsz}, h_input_length}},
+                     {"h_k_len", {MEMORY_CPU, TYPE_INT32, {bsz}, h_context_length}},
+                     {"finished", {MEMORY_GPU, TYPE_BOOL, {bsz}, finished}},
                      {"dc_batch_size", {MEMORY_CPU, TYPE_INT32, {1}, &dc_batch_size}},
-                     {"dc_sum_seq_len", {MEMORY_CPU, TYPE_INT32, {1}, &dc_sum_seq_len}},
-                     {"dc_max_seq_len", {MEMORY_CPU, TYPE_INT32, {1}, &dc_max_seq_len}},
-                     {"finished", {MEMORY_GPU, TYPE_BOOL, {bsz}, dc_finished}},
                      {"pf_batch_size", {MEMORY_CPU, TYPE_INT32, {1}, &pf_batch_size}},
-                     {"pf_max_q_len", {MEMORY_CPU, TYPE_INT32, {1}, &pf_max_input_len}},
-                     {"pf_max_k_len", {MEMORY_CPU, TYPE_INT32, {1}, &pf_max_context_len}},
-                     {"session_len", {MEMORY_CPU, TYPE_INT32, {1}, &pf_session_len}},
                      {"rope_theta", {MEMORY_GPU, TYPE_FP32, {hidden_units_}, rope_theta}},
                      {"cu_block_counts", {MEMORY_GPU, TYPE_INT32, {bsz}, cu_block_cnts}}};
 
     TensorMap outputs{{"decoder_output", {MEMORY_GPU, dtype, {token_num, hidden_units_}, decoder_output}},
-                      {"key_cache", {MEMORY_GPU, TYPE_UINT64, {bsz}, k_block_ptrs}},
-                      {"value_cache", {MEMORY_GPU, TYPE_UINT64, {bsz}, v_block_ptrs}},
-                      {"tmp_k", {MEMORY_GPU, TYPE_UINT64, {bsz}, pf_tmp_k_ptrs}},
-                      {"tmp_v", {MEMORY_GPU, TYPE_UINT64, {bsz}, pf_tmp_v_ptrs}},
+                      {"block_ptrs", {MEMORY_GPU, TYPE_UINT64, {bsz}, block_ptrs}},
                       {"last_token_hidden_units", {MEMORY_GPU, dtype, {bsz, hidden_units_}, out}}};
+
+    if (lora_mask != nullptr && have_embeddings) {
+        inputs.insert({"lora_mask", {MEMORY_GPU, TYPE_INT32, {token_num}, lora_mask}});
+    }
 
     unified_decoder_->forward(&outputs, &inputs, &weights_->decoder_layer_weights);
 }
@@ -382,7 +410,8 @@ void LlamaV2<T>::dynamicDecode(int*            token_ids,
         {"should_stop", {MEMORY_CPU, TYPE_BOOL, {1}, should_stop}},
         {"curand_state", {MEMORY_GPU, TYPE_VOID, {batch_size}, curand_state}}};
 
-    const std::vector<std::string> optional_outputs{"cum_log_probs", "output_log_probs"};
+    const std::vector<std::string> optional_outputs{
+        "cum_log_probs", "output_log_probs", "sampled_indexes", "sampled_logprobs", "sampled_nums"};
     for (const auto& key : optional_outputs) {
         if (outputs->isExist(key)) {
             dynamic_decode_output_tensors.insert({key, outputs->at(key)});
@@ -509,7 +538,9 @@ void LlamaV2<T>::forward(std::unordered_map<std::string, Tensor>*       outputs,
 }
 
 template class LlamaV2<half>;
+#ifdef ENABLE_FP32
 template class LlamaV2<float>;
+#endif
 #ifdef ENABLE_BF16
 template class LlamaV2<__nv_bfloat16>;
 #endif

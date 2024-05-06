@@ -1,43 +1,83 @@
-Welcome to LMDeploy's documentation!
+Welcome to LMDeploy's tutorials!
 ====================================
 
-You can switch between Chinese and English documents in the lower-left corner of the layout.
-
+.. _get_started:
 .. toctree::
    :maxdepth: 2
+   :caption: Get Started
+
+   get_started.md
+
+.. _build:
+.. toctree::
+   :maxdepth: 1
    :caption: Build
 
    build.md
 
+.. _benchmark:
 .. toctree::
-   :maxdepth: 2
-   :caption: Chatting with PyTorch
+   :maxdepth: 1
+   :caption: Benchmark
 
-   pytorch.md
+   benchmark/profile_generation.md
+   benchmark/profile_throughput.md
+   benchmark/profile_api_server.md
+   benchmark/profile_triton_server.md
+   benchmark/evaluate_with_opencompass.md
 
+.. _supported_models:
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
+   :caption: Supported Models
+
+   supported_models/supported_models.md
+
+.. _inference:
+.. toctree::
+   :maxdepth: 1
+   :caption: Inference
+
+   inference/pipeline.md
+   inference/vl_pipeline.md
+
+
+.. _serving:
+.. toctree::
+   :maxdepth: 1
+   :caption: serving
+
+   serving/api_server.md
+   serving/api_server_vl.md
+   serving/gradio.md
+   serving/proxy_server.md
+
+.. _quantization:
+.. toctree::
+   :maxdepth: 1
    :caption: Quantization
 
-   quantization.md
+   quantization/w4a16.md
+   quantization/kv_quant.md
+   quantization/w8a8.md
 
 .. toctree::
-   :maxdepth: 2
-   :caption: Serving
+   :maxdepth: 1
+   :caption: Advanced Guide
 
-   serving.md
+   inference/turbomind.md
+   inference/pytorch.md
+   advance/pytorch_new_model.md
+   advance/long_context.md
+   advance/chat_template.md
+   advance/debug_turbomind.md
+   serving/qos.md
 
 .. toctree::
-   :maxdepth: 2
-   :caption: TurboMind
+   :maxdepth: 1
+   :caption: API Reference
 
-   turbomind.md
-
-.. toctree::
-   :caption: Switch Language
-
-   switch_language.md
-
+   api/pipeline.rst
 
 Indices and tables
 ==================

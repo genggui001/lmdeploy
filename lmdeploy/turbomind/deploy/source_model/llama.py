@@ -2,6 +2,7 @@
 import json
 import os
 import os.path as osp
+from glob import glob
 
 import torch
 from safetensors.torch import load_file
@@ -14,16 +15,19 @@ from .base import INPUT_MODELS, BaseInputModel, BaseReader
 class LlamaReader(BaseReader):
     """LlamaReader."""
 
+    attn_layer_prefix = 'model.layers'
     attn_layer_patten = r'model.layers.([0-9]+).'
     tok_embeddings_key = 'model.embed_tokens.weight'
     norm_weight_key = 'model.norm.weight'
     output_weight_key = 'lm_head.weight'
 
-    def __init__(self, new_params: dict, unused_params: dict, last_bin: bool):
+    def __init__(self, new_params: dict, unused_params: dict, last_bin: bool,
+                 model_cfg: dict):
         super().__init__()
         self.params = unused_params
         self.params.update(new_params)
         self.last_bin = last_bin
+        self.model_cfg = model_cfg
         self.init_layer_id()
 
     def init_layer_id(self):
@@ -61,7 +65,7 @@ class LlamaReader(BaseReader):
         result = []
         for key in ['q', 'k', 'v', 'o']:
             tensor = self.params.get(
-                f'model.layers.{i}.self_attn.{key}_proj.{kind}')
+                f'{self.attn_layer_prefix}.{i}.self_attn.{key}_proj.{kind}')
             if not allow_none:
                 assert tensor is not None
             result.append(tensor)
@@ -85,13 +89,15 @@ class LlamaReader(BaseReader):
 
     def attn_norm(self, i: int):
         """Get attn norm for layer i."""
-        return self.params[f'model.layers.{i}.input_layernorm.weight']
+        return self.params[
+            f'{self.attn_layer_prefix}.{i}.input_layernorm.weight']
 
     def _ffn(self, i: int, kind: str):
         """Get ffn kind for layer i."""
         result = []
         for key in ['gate', 'down', 'up']:
-            tensor = self.params[f'model.layers.{i}.mlp.{key}_proj.{kind}']
+            tensor = self.params[
+                f'{self.attn_layer_prefix}.{i}.mlp.{key}_proj.{kind}']
             result.append(tensor)
         return (*result, )
 
@@ -109,7 +115,8 @@ class LlamaReader(BaseReader):
 
     def ffn_norm(self, i: int):
         """Get ffn norm for layer i."""
-        return self.params[f'model.layers.{i}.post_attention_layernorm.weight']
+        return self.params[
+            f'{self.attn_layer_prefix}.{i}.post_attention_layernorm.weight']
 
 
 @INPUT_MODELS.register_module(name='hf')
@@ -128,13 +135,11 @@ class LlamaModel(BaseInputModel):
 
     def get_ckpt(self):
         """Get weight files."""
-        suffixes = ['.safetensors', '.bin']
+        patterns = ['*.safetensors', 'pytorch_model*.bin']
         files = []
-        for suffix in suffixes:
-            files = [
-                file for file in os.listdir(self.ckpt_path)
-                if file.endswith(suffix)
-            ]
+        for pattern in patterns:
+            files = glob(os.path.join(self.ckpt_path, pattern))
+            files = [os.path.basename(file) for file in files]
             if len(files) > 0:
                 break
         files = sorted(files)
@@ -159,7 +164,7 @@ class LlamaModel(BaseInputModel):
                 else:
                     new_params = load_file(osp.join(self.ckpt_path, ckpt))
                 ret = self.Reader(new_params, unused_params,
-                                  i == self.nmgrs - 1)
+                                  i == self.nmgrs - 1, self.model_info())
                 yield ret
                 ret.clean_up(is_last_bin)
         except GeneratorExit:
@@ -181,6 +186,7 @@ class LlamaModel(BaseInputModel):
             model_arg = json.load(f)
             num_layer = model_arg['num_hidden_layers']
             norm_eps = model_arg['rms_norm_eps']
+            attn_head_num = model_arg['num_attention_heads']
             if 'num_key_value_heads' in model_arg:
                 kv_head_num = model_arg['num_key_value_heads']
             else:
@@ -188,11 +194,20 @@ class LlamaModel(BaseInputModel):
             rope_theta = float(model_arg.get('rope_theta', 10000.0))
             max_position_embeddings = int(
                 model_arg.get('max_position_embeddings', 0))
-            repo_scaling = bool(model_arg.get('rope_scaling', False))
+            rope_scaling = model_arg.get('rope_scaling', None)
+            scaling_factor = 0.0
+            use_dynamic_ntk = 0
+            if isinstance(rope_scaling, dict):
+                scaling_type = model_arg['rope_scaling'].get('type', '')
+                scaling_factor = model_arg['rope_scaling'].get('factor', '')
+                if scaling_type == 'dynamic':
+                    use_dynamic_ntk = 1
 
         return dict(num_layer=num_layer,
                     norm_eps=norm_eps,
+                    attn_head_num=attn_head_num,
                     kv_head_num=kv_head_num,
                     rope_theta=rope_theta,
                     max_position_embeddings=max_position_embeddings,
-                    use_dynamic_ntk=int(repo_scaling))
+                    use_dynamic_ntk=use_dynamic_ntk,
+                    rope_scaling_factor=scaling_factor)

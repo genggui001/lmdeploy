@@ -55,15 +55,42 @@ class UsageInfo(BaseModel):
     completion_tokens: Optional[int] = 0
 
 
-class ChatCompletionRequest(BaseModel):
+class ChatCompletionRequestQos(BaseModel):
     """Chat completion request."""
     model: str
     messages: Union[str, List[Dict[str, str]]]
     temperature: Optional[float] = 0.7
     top_p: Optional[float] = 1.0
+    logprobs: Optional[bool] = False
+    top_logprobs: Optional[int] = None
     n: Optional[int] = 1
-    max_tokens: Optional[int] = 512
+    max_tokens: Optional[int] = Field(default=None, examples=[None])
     stop: Optional[bool] = False
+    stream: Optional[bool] = False
+    presence_penalty: Optional[float] = 0.0
+    frequency_penalty: Optional[float] = 0.0
+    user: Optional[str] = None
+    user_id: Optional[str] = None
+    # additional argument of lmdeploy
+    repetition_penalty: Optional[float] = 1.0
+    session_id: Optional[int] = -1
+    ignore_eos: Optional[bool] = False
+    top_k: Optional[int] = 40
+
+
+class ChatCompletionRequest(BaseModel):
+    """Chat completion request."""
+    model: str
+    # yapf: disable
+    messages: Union[str, List[Dict[str, Any]]] = Field(examples=[[{'role': 'user', 'content': 'hi'}]])  # noqa
+    temperature: Optional[float] = 0.7
+    top_p: Optional[float] = 1.0
+    logprobs: Optional[bool] = False
+    top_logprobs: Optional[int] = None
+    n: Optional[int] = 1
+    max_tokens: Optional[int] = Field(default=None, examples=[None])
+    stop: Optional[Union[str, List[str]]] = Field(default=None, examples=[None])  # noqa
+    # yapf: enable
     stream: Optional[bool] = False
     presence_penalty: Optional[float] = 0.0
     frequency_penalty: Optional[float] = 0.0
@@ -72,6 +99,8 @@ class ChatCompletionRequest(BaseModel):
     repetition_penalty: Optional[float] = 1.0
     session_id: Optional[int] = -1
     ignore_eos: Optional[bool] = False
+    skip_special_tokens: Optional[bool] = True
+    top_k: Optional[int] = 40
 
 
 class ChatMessage(BaseModel):
@@ -80,10 +109,35 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class LogProbs(BaseModel):
+    text_offset: List[int] = Field(default_factory=list)
+    token_logprobs: List[Optional[float]] = Field(default_factory=list)
+    tokens: List[str] = Field(default_factory=list)
+    top_logprobs: Optional[List[Optional[Dict[str, float]]]] = None
+
+
+class TopLogprob(BaseModel):
+    token: str
+    bytes: Optional[List[int]] = None
+    logprob: float
+
+
+class ChatCompletionTokenLogprob(BaseModel):
+    token: str
+    bytes: Optional[List[int]] = None
+    logprob: float
+    top_logprobs: List[TopLogprob]
+
+
+class ChoiceLogprobs(BaseModel):
+    content: Optional[List[ChatCompletionTokenLogprob]] = None
+
+
 class ChatCompletionResponseChoice(BaseModel):
     """Chat completion response choices."""
     index: int
     message: ChatMessage
+    logprobs: Optional[ChoiceLogprobs] = None
     finish_reason: Optional[Literal['stop', 'length']] = None
 
 
@@ -107,6 +161,7 @@ class ChatCompletionResponseStreamChoice(BaseModel):
     """Chat completion response stream choice."""
     index: int
     delta: DeltaMessage
+    logprobs: Optional[ChoiceLogprobs] = None
     finish_reason: Optional[Literal['stop', 'length']] = None
 
 
@@ -126,8 +181,10 @@ class CompletionRequest(BaseModel):
     suffix: Optional[str] = None
     temperature: Optional[float] = 0.7
     n: Optional[int] = 1
+    logprobs: Optional[int] = None
     max_tokens: Optional[int] = 16
-    stop: Optional[Union[str, List[str]]] = None
+    stop: Optional[Union[str, List[str]]] = Field(default=None,
+                                                  examples=[None])
     stream: Optional[bool] = False
     top_p: Optional[float] = 1.0
     logprobs: Optional[int] = None
@@ -139,13 +196,40 @@ class CompletionRequest(BaseModel):
     repetition_penalty: Optional[float] = 1.0
     session_id: Optional[int] = -1
     ignore_eos: Optional[bool] = False
+    skip_special_tokens: Optional[bool] = True
+    top_k: Optional[int] = 40  # for opencompass
+
+
+class CompletionRequestQos(BaseModel):
+    """Completion request."""
+    model: str
+    prompt: Union[str, List[Any]]
+    suffix: Optional[str] = None
+    temperature: Optional[float] = 0.7
+    n: Optional[int] = 1
+    logprobs: Optional[int] = None
+    max_tokens: Optional[int] = 16
+    stop: Optional[Union[str, List[str]]] = None
+    stream: Optional[bool] = False
+    top_p: Optional[float] = 1.0
+    logprobs: Optional[int] = None
+    echo: Optional[bool] = False
+    presence_penalty: Optional[float] = 0.0
+    frequency_penalty: Optional[float] = 0.0
+    user: Optional[str] = None
+    # additional argument of lmdeploy
+    top_k: Optional[int] = 40
+    repetition_penalty: Optional[float] = 1.0
+    session_id: Optional[int] = -1
+    ignore_eos: Optional[bool] = False
+    user_id: Optional[str] = None
 
 
 class CompletionResponseChoice(BaseModel):
     """Completion response choices."""
     index: int
     text: str
-    logprobs: Optional[int] = None
+    logprobs: Optional[LogProbs] = None
     finish_reason: Optional[Literal['stop', 'length']] = None
 
 
@@ -163,7 +247,7 @@ class CompletionResponseStreamChoice(BaseModel):
     """Completion response stream choice."""
     index: int
     text: str
-    logprobs: Optional[float] = None
+    logprobs: Optional[LogProbs] = None
     finish_reason: Optional[Literal['stop', 'length']] = None
 
 
@@ -206,6 +290,28 @@ class EncodeResponse(BaseModel):
 
 class GenerateRequest(BaseModel):
     """Generate request."""
+    prompt: Union[str, List[Dict[str, Any]]]
+    image_url: Optional[Union[str, List[str]]] = Field(default=None,
+                                                       examples=[None])
+    session_id: int = -1
+    interactive_mode: bool = False
+    stream: bool = False
+    stop: Optional[Union[str, List[str]]] = Field(default=None,
+                                                  examples=[None])
+    request_output_len: Optional[int] = Field(default=None,
+                                              examples=[None])  # noqa
+    top_p: float = 0.8
+    top_k: int = 40
+    temperature: float = 0.8
+    repetition_penalty: float = 1.0
+    ignore_eos: bool = False
+    skip_special_tokens: Optional[bool] = True
+    cancel: Optional[bool] = False  # cancel a responding request
+    adapter_name: Optional[str] = Field(default=None, examples=[None])
+
+
+class GenerateRequestQos(BaseModel):
+    """Generate request."""
     prompt: Union[str, List[Dict[str, str]]]
     session_id: int = -1
     interactive_mode: bool = False
@@ -217,10 +323,13 @@ class GenerateRequest(BaseModel):
     temperature: float = 0.8
     repetition_penalty: float = 1.0
     ignore_eos: bool = False
+    user_id: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
     """Generate response."""
     text: str
     tokens: int
+    input_tokens: int
+    history_tokens: int
     finish_reason: Optional[Literal['stop', 'length']] = None

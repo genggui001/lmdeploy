@@ -194,7 +194,7 @@ __global__ void generic_activation(T*                      out,
     using Float_T       = typename packed_as<float, packed_elems>::type;
     using Packed_Int8_t = typename packed_as<int8_t, packed_elems>::type;
 
-    for (int id = blockIdx.x * blockDim.x + threadIdx.x; id < m * n; id += blockDim.x * gridDim.x) {
+    for (int64_t id = blockIdx.x * blockDim.x + threadIdx.x; id < 1LL * m * n; id += blockDim.x * gridDim.x) {
         T val;
         if (int8_mode == 2) {
             // val = cuda_cast<T>(cuda_cast<Float_T>(reinterpret_cast<Packed_Int8_t*>(out)[id]) * activation_in[0]);
@@ -275,7 +275,7 @@ void invokeGenericActivation(T*           out,
     }
     else {
         block.x = n_threads;
-        grid.x  = ceil(m * n / double(n_threads));
+        grid.x  = ceil(1LL * m * n / double(n_threads));
     }
     TM_LOG_DEBUG("%d %d", grid.x, block.x);
     sync_check_cuda_error();
@@ -311,20 +311,10 @@ void invokeGenericActivation(T*           out,
                                                              const int    seq_len,                                     \
                                                              cudaStream_t stream);
 
-// INSTANTIATE_GENERIC_ACTIVATION(GeluActivation, float, float);
-// INSTANTIATE_GENERIC_ACTIVATION(GeluActivation, half, half);
-// #ifdef ENABLE_BF16
-// INSTANTIATE_GENERIC_ACTIVATION(GeluActivation, __nv_bfloat16, __nv_bfloat16);
-// #endif
-
-// INSTANTIATE_GENERIC_ACTIVATION(ReluActivation, float, float);
-// INSTANTIATE_GENERIC_ACTIVATION(ReluActivation, half, half);
-// #ifdef ENABLE_BF16
-// INSTANTIATE_GENERIC_ACTIVATION(ReluActivation, __nv_bfloat16, __nv_bfloat16);
-// #endif
-
-INSTANTIATE_GENERIC_ACTIVATION(SiluActivation, float, float);
 INSTANTIATE_GENERIC_ACTIVATION(SiluActivation, half, half);
+#ifdef ENABLE_FP32
+INSTANTIATE_GENERIC_ACTIVATION(SiluActivation, float, float);
+#endif
 #ifdef ENABLE_BF16
 INSTANTIATE_GENERIC_ACTIVATION(SiluActivation, __nv_bfloat16, __nv_bfloat16);
 #endif

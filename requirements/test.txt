@@ -2,4 +2,9 @@ allure-pytest
 coverage
 pynvml
 pytest
+pytest-assume
+pytest-order
+pytest-rerunfailures
+pytest-sugar
+pytest-xdist
 pyyaml

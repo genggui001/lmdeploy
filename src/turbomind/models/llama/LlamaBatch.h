@@ -20,6 +20,7 @@
 namespace turbomind {
 
 struct BatchState {
+    int*  h_prompt_length;  // history + input, ignore generated
     int*  h_context_length;
     bool* h_finished;
 
@@ -45,9 +46,6 @@ class LlamaV2;
 struct GenerationState {
     int max_init_ctx_len;
     int step;
-
-    int sum_seq_len;
-    int max_seq_len;
 
     int partial;
     int partial_context_legnth;
@@ -92,8 +90,10 @@ public:
 
     [[nodiscard]] Signal Interrupt(int index, bool force_stop = false, bool force_end = false);
 
-    void
-    OutputContextLogits(T* context_decoder_output, const std::vector<int>& indices, const std::vector<int>& lengths);
+    void OutputContextLogits(T*                                  context_decoder_output,
+                             const std::vector<int>&             indices,
+                             const std::vector<int>&             lengths,
+                             const std::vector<const Sequence*>& sequences);
 
     explicit LlamaBatch(const EngineParams& params, int cache_block_seq_len, int quant_policy, LlamaV2<T>* model);
 
@@ -198,8 +198,7 @@ private:
     ///////////////////////////////////////////////////////////////////
     // k/v cache block buffers
     int*       cu_block_counts_{};
-    uintptr_t* k_block_ptrs_{};
-    uintptr_t* v_block_ptrs_{};
+    uintptr_t* block_ptrs_{};
 
     ////////////////////////////////////////////////////////////////////
     // context decoding temp buffers
@@ -211,23 +210,24 @@ private:
     int* input_length_buf_{};    // input + cache missed length
     int* context_length_buf_{};  // history length + input_length
     int* init_context_length_{};
-    // temp buffers used for block->linear kv-cache conversion
-    T*     tmp_k_cache_buf_{};
-    T*     tmp_v_cache_buf_{};
-    void** tmp_k_ptrs_{};
-    void** tmp_v_ptrs_{};
-    void** h_tmp_k_ptrs_{};
-    void** h_tmp_v_ptrs_{};
 
     T*   decoder_input_buf_{};
     T*   decoder_output_buf_{};
     int* sequence_lengths_{};  // current sequence length
     int* init_ctx_lens_{};
+    int* lora_mask_buf_{};  // lora
 
     float* logits_buf_{};        // combined logits
     float* local_logits_buf_{};  // tensor parallel local logits
     float* context_logits_buf_{};
     float* local_context_logits_buf_{};
+
+    float*    sampled_logprobs_{};
+    uint32_t* sampled_indexes_{};
+    uint32_t* sampled_nums_{};
+    float*    h_sampled_logprobs_{};
+    uint32_t* h_sampled_indexes_{};
+    uint32_t* h_sampled_nums_{};
 
     float* rope_theta_{};
 
@@ -243,9 +243,9 @@ private:
     int*       h_input_length_buf_{};
     uint32_t*  h_seq_limit_len_{};
     int*       h_cu_block_counts_{};
-    uintptr_t* h_k_block_ptrs_{};
-    uintptr_t* h_v_block_ptrs_{};
+    uintptr_t* h_block_ptrs_{};
 
+    int*   h_min_length_{};
     int*   h_runtime_top_k_{};
     float* h_runtime_top_p_{};
     float* h_temperature_{};

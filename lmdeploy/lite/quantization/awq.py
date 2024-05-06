@@ -15,9 +15,18 @@ NORM_FCS_MAP = {
         ['self_attn.k_proj', 'self_attn.q_proj', 'self_attn.v_proj'],
         'post_attention_layernorm': ['mlp.gate_proj', 'mlp.up_proj']
     },
+    'InternLM2DecoderLayer': {
+        'attention_norm': ['attention.wqkv'],
+        'ffn_norm': ['feed_forward.w1', 'feed_forward.w3']
+    },
     'QWenBlock': {
         'ln_1': ['attn.c_attn'],
         'ln_2': ['mlp.w1', 'mlp.w2']
+    },
+    'Qwen2DecoderLayer': {
+        'input_layernorm':
+        ['self_attn.k_proj', 'self_attn.q_proj', 'self_attn.v_proj'],
+        'post_attention_layernorm': ['mlp.gate_proj', 'mlp.up_proj']
     },
     'DecoderLayer': {
         'input_layernorm': ['self_attn.W_pack'],
@@ -34,9 +43,16 @@ FC_FCS_MAP = {
         'self_attn.v_proj': ['self_attn.o_proj'],
         'mlp.up_proj': ['mlp.down_proj']
     },
+    'InternLM2DecoderLayer': {
+        'feed_forward.w3': ['feed_forward.w2']
+    },
     'QWenBlock': {
         'attn.c_attn': ['attn.c_proj'],
         'mlp.w1': ['mlp.c_proj']
+    },
+    'Qwen2DecoderLayer': {
+        'self_attn.v_proj': ['self_attn.o_proj'],
+        'mlp.up_proj': ['mlp.down_proj']
     },
     'DecoderLayer': {
         'self_attn.W_pack': ['self_attn.o_proj'],
@@ -71,6 +87,13 @@ def smooth_ln_fcs(ln: torch.nn.Module,
     :return: Scales
     """
     device, dtype = fcs[0].weight.device, fcs[0].weight.dtype
+
+    # If zeros exist within the weight of the layer norm, it becomes
+    # unnecessary to perform smooth quantization at the positions where
+    # these zeros occur.
+    zero_positions = (ln.weight == 0).nonzero(as_tuple=True)[0]
+    nonzero_positions = (ln.weight != 0).nonzero(as_tuple=True)[0]
+
     act_scales = act_scales.to(device=device, dtype=dtype)
 
     concat_w = torch.cat([fc.weight for fc in fcs], dim=0)
@@ -78,7 +101,11 @@ def smooth_ln_fcs(ln: torch.nn.Module,
 
     scales = (act_scales.pow(alpha) /
               w_scales.pow(1 - alpha)).to(device).to(dtype)
-    scales = scales / (scales.max() * scales.min()).sqrt()
+
+    scales = scales / (scales[nonzero_positions].max() *
+                       scales[nonzero_positions].min()).sqrt()
+
+    scales[zero_positions] = 1
 
     ln.weight.div_(scales)
     if hasattr(ln, 'bias'):
@@ -182,8 +209,8 @@ def check_awq_supported(layer_type):
 
 def quant_weights(model, fcs, bits, symmetry, group_size=-1, device='cuda'):
     """Quantize the weights of the target model's linear layers."""
+    from lmdeploy.legacy.pytorch.modules import WeightOnlyQLinear
     from lmdeploy.lite.quantization import WeightQuantizer
-    from lmdeploy.pytorch.modules import WeightOnlyQLinear
     for name, fc in fcs.items():
         fc.to(device)
         quantizer = WeightQuantizer(bits, symmetry, 'per_group', group_size)

@@ -33,6 +33,7 @@
 #include "src/turbomind/utils/cublasMMWrapper.h"
 #include "src/turbomind/utils/instance_comm.h"
 #include "src/turbomind/utils/nccl_utils.h"
+#include <limits>
 #include <unordered_map>
 
 using ffi_api_lock_ctrl_t = std::function<void(int)>;
@@ -48,6 +49,7 @@ public:
         RequestQueue                          request_queue;
         std::shared_ptr<Barrier>              barrier;
         bool                                  abort;
+        std::atomic<size_t>                   free_size{std::numeric_limits<size_t>::max()};
     };
 
     ~LlamaV2();
@@ -66,6 +68,7 @@ public:
             int                          quant_policy,
             bool                         use_context_fmha,
             const EngineParams&          engine_params,
+            const LoraParams&            lora_params,
             std::shared_ptr<SharedState> shared_state,
             LlamaWeight<T>*              weights,
             NcclParam                    tensor_para,
@@ -107,31 +110,28 @@ private:
 
     void embeddingLookup(T* embeddings, const int* token_ids_buf, int batch_size, int step);
 
-    void updateEmbedding(T* decoder_input, const int bsz, const int* h_input_length, const Sequence** sequences);
+    void updateEmbedding(T*               decoder_input,
+                         const int        bsz,
+                         const int*       h_input_length,
+                         const Sequence** sequences,
+                         int              token_num,
+                         int*             lora_mask,
+                         bool*            have_embeddings);
 
     void forwardUnified(T*               out,
                         T*               decoder_output,
                         T*               decoder_input,
-                        void**           k_block_ptrs,
-                        void**           v_block_ptrs,
-                        const int*       input_ids,
+                        void**           block_ptrs,
                         const int*       cu_block_cnts,
+                        const int*       input_ids,
+                        const int*       h_input_length,
+                        const int*       h_context_length,
                         const float*     rope_theta,
-                        const bool*      dc_finished,
-                        const int*       pf_input_length,
-                        const int*       pf_context_length,
-                        T**              pf_tmp_k_ptrs,
-                        T**              pf_tmp_v_ptrs,
+                        const bool*      finished,
                         size_t           token_num,
                         int              dc_batch_size,
-                        int              dc_step,
-                        int              dc_sum_seq_len,
-                        int              dc_max_seq_len,
                         int              pf_batch_size,
-                        int              pf_max_input_len,
-                        int              pf_max_context_len,
-                        int              pf_session_len,
-                        const int*       h_input_length,
+                        int*             lora_mask,
                         const Sequence** sequences);
 
     void postDecodeEmbedding(float* logits, float* local_logits, const T* decoder_output, int batch_size);
@@ -192,6 +192,7 @@ private:
     std::shared_ptr<SharedState>   shared_state_;
     ffi_api_lock_ctrl_t            ffi_lock_;
     std::unique_ptr<LlamaBatch<T>> batch_;
+    LoraParams                     lora_params_;
 };
 
 }  // namespace turbomind

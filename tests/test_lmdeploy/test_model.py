@@ -1,6 +1,51 @@
 import pytest
 
-from lmdeploy.model import MODELS, SamplingParam
+from lmdeploy.model import MODELS, best_match_model
+
+
+@pytest.mark.parametrize(
+    'model_path_and_name',
+    [('internlm/internlm-chat-7b', ['internlm']),
+     ('internlm/internlm2-1_8b', ['base']),
+     ('models--internlm--internlm-chat-7b/snapshots/1234567', ['internlm']),
+     ('Qwen/Qwen-7B-Chat', ['qwen']),
+     ('codellama/CodeLlama-7b-hf', ['codellama']),
+     ('upstage/SOLAR-0-70b', ['solar', 'solar-70b']),
+     ('meta-llama/Llama-2-7b-chat-hf', ['llama2']),
+     ('THUDM/chatglm2-6b', ['chatglm']),
+     ('01-ai/Yi-6B-200k', ['yi', 'yi-200k']), ('01-ai/Yi-34B-Chat', ['yi']),
+     ('01-ai/Yi-6B-Chat', ['yi', 'yi-chat']),
+     ('WizardLM/WizardLM-70B-V1.0', ['wizardlm']),
+     ('codellama/CodeLlama-34b-Instruct-hf', ['codellama']),
+     ('deepseek-ai/deepseek-coder-6.7b-instruct', ['deepseek-coder']),
+     ('deepseek-ai/deepseek-vl-7b-chat', ['deepseek-vl']),
+     ('deepseek-ai/deepseek-moe-16b-chat', ['deepseek']),
+     ('tiiuae/falcon-7b', ['falcon']), ('workspace', [None])])
+@pytest.mark.parametrize('suffix', ['', '-w4', '-4bit', '-16bit'])
+def test_best_match_model(model_path_and_name, suffix):
+    if model_path_and_name[0] == 'internlm/internlm2-1_8b' and suffix:
+        return  # internlm/internlm2-1_8b-suffix will got None
+    deduced_name = best_match_model(model_path_and_name[0] + suffix)
+    if deduced_name is not None:
+        assert deduced_name in model_path_and_name[
+            1], f'expect {model_path_and_name[1]}, but got {deduced_name}'
+    else:
+        assert deduced_name in model_path_and_name[
+            1], f'expect {model_path_and_name[1]}, but got {deduced_name}'
+
+
+@pytest.mark.parametrize('model_name',
+                         ['llama2', 'base', 'yi', 'qwen-7b', 'vicuna'])
+@pytest.mark.parametrize('meta_instruction', ['[fake meta_instruction]'])
+def test_model_config(model_name, meta_instruction):
+    from lmdeploy.model import ChatTemplateConfig
+    chat_template = ChatTemplateConfig(
+        model_name, meta_instruction=meta_instruction).chat_template
+    prompt = chat_template.get_prompt('')
+    if model_name == 'base':
+        assert prompt == ''
+    else:
+        assert meta_instruction in prompt
 
 
 def test_base_model():
@@ -21,8 +66,6 @@ def test_vicuna():
     model = MODELS.get('vicuna')(capability='completion')
     assert model.get_prompt(prompt, sequence_start=True) == prompt
     assert model.get_prompt(prompt, sequence_start=False) == prompt
-    assert model.stop_words is None
-    assert model.system is not None
 
     model = MODELS.get('vicuna')(capability='chat',
                                  system='Provide answers in Python')
@@ -34,7 +77,7 @@ def test_vicuna():
     _prompt = None
     with pytest.raises(AssertionError):
         _prompt = model.get_prompt(prompt, sequence_start=True)
-    assert _prompt is None
+        assert _prompt is None
 
 
 def test_internlm_chat():
@@ -43,7 +86,7 @@ def test_internlm_chat():
     assert model.get_prompt(prompt, sequence_start=True) == prompt
     assert model.get_prompt(prompt, sequence_start=False) == prompt
     assert model.stop_words is not None
-    assert model.system == ''
+    assert model.system == '<|System|>:'
     assert model.session_len == 2048
 
     model = MODELS.get('internlm-chat-7b')(capability='chat',
@@ -56,10 +99,46 @@ def test_internlm_chat():
     _prompt = None
     with pytest.raises(AssertionError):
         _prompt = model.get_prompt(prompt, sequence_start=True)
-    assert _prompt is None
+        assert _prompt is None
 
     model = MODELS.get('internlm-chat-7b-8k')()
     assert model.session_len == 8192
+
+
+def test_messages2prompt4internlm2_chat():
+    model = MODELS.get('internlm2-chat-7b')()
+    # Test with a single message
+    messages = [
+        {
+            'role': 'system',
+            'name': 'interpreter',
+            'content': 'You have access to python environment.'
+        },
+        {
+            'role': 'user',
+            'content': 'use python drwa a line'
+        },
+        {
+            'role': 'assistant',
+            'content': '<|action_start|><|interpreter|>\ncode<|action_end|>\n'
+        },
+        {
+            'role': 'environment',
+            'name': 'interpreter',
+            'content': "[{'type': 'image', 'content': 'image url'}]"
+        },
+    ]
+    expected_prompt = (
+        model.system.strip() +
+        ' name=<|interpreter|>\nYou have access to python environment.' +
+        model.eosys + model.user + 'use python drwa a line' + model.eoh +
+        model.assistant +
+        '<|action_start|><|interpreter|>\ncode<|action_end|>\n' + model.eoa +
+        model.separator + model.environment.strip() +
+        " name=<|interpreter|>\n[{'type': 'image', 'content': 'image url'}]" +
+        model.eoenv + model.assistant)
+    actual_prompt = model.messages2prompt(messages)
+    assert actual_prompt == expected_prompt
 
 
 def test_baichuan():
@@ -68,7 +147,6 @@ def test_baichuan():
     assert model.get_prompt(prompt, sequence_start=True) == prompt
     assert model.get_prompt(prompt, sequence_start=False) == prompt
     assert model.stop_words is None
-    assert model.repetition_penalty == 1.1
 
     model = MODELS.get('baichuan-7b')(capability='chat')
     _prompt = model.get_prompt(prompt, sequence_start=True)
@@ -81,19 +159,19 @@ def test_llama2():
     assert model.get_prompt(prompt, sequence_start=True) == prompt
     assert model.get_prompt(prompt, sequence_start=False) == prompt
     assert model.stop_words is None
-    assert model.default_sys_prompt is not None
+    assert model.meta_instruction is not None
 
     model = MODELS.get('llama2')(capability='chat',
-                                 system='Provide answers in Python')
+                                 meta_instruction='Provide answers in Python')
     assert model.get_prompt(prompt, sequence_start=True) != prompt
     assert model.get_prompt(prompt, sequence_start=False) != prompt
-    assert model.default_sys_prompt == 'Provide answers in Python'
+    assert model.meta_instruction == 'Provide answers in Python'
 
     model = MODELS.get('llama2')(capability='voice')
     _prompt = None
     with pytest.raises(AssertionError):
         _prompt = model.get_prompt(prompt, sequence_start=True)
-    assert _prompt is None
+        assert _prompt is None
 
 
 def test_qwen():
@@ -111,7 +189,7 @@ def test_qwen():
     _prompt = None
     with pytest.raises(AssertionError):
         _prompt = model.get_prompt(prompt, sequence_start=True)
-    assert _prompt is None
+        assert _prompt is None
 
 
 def test_codellama_completion():
@@ -169,37 +247,21 @@ def test_codellama_others():
     assert model is None
 
 
-def test_sampling_param():
-    model = MODELS.get('llama')()
-    default_sampling_param = SamplingParam()
-    assert model.sampling_param == default_sampling_param
-
-    model = MODELS.get('llama')(top_p=0.1, top_k=10)
-    assert model.sampling_param.top_p == 0.1 and \
-        model.sampling_param.top_k == 10
-    assert model.sampling_param.temperature == 0.8 and \
-        model.sampling_param.repetition_penalty == 1.0
-
-    model = MODELS.get('codellama')(capability='completion')
-    assert model.sampling_param.top_p == 0.9 and \
-        model.sampling_param.top_k is None and \
-        model.sampling_param.temperature == 0.2 and \
-        model.sampling_param.repetition_penalty == 1.0
-
-    model = MODELS.get('codellama')(capability='chat')
-    assert model.sampling_param.top_p == 0.95 and \
-        model.sampling_param.top_k is None and \
-        model.sampling_param.temperature == 0.2 and \
-        model.sampling_param.repetition_penalty == 1.0
-
-    model = MODELS.get('codellama')(capability='infilling')
-    assert model.sampling_param.top_p == 0.9 and \
-        model.sampling_param.top_k is None and \
-        model.sampling_param.temperature == 0.0 and \
-        model.sampling_param.repetition_penalty == 1.0
-
-    model = MODELS.get('codellama')(capability='python')
-    assert model.sampling_param.top_p == 0.9 and \
-        model.sampling_param.top_k is None and \
-        model.sampling_param.temperature == 0.2 and \
-        model.sampling_param.repetition_penalty == 1.0
+def test_deepseek_coder():
+    model = MODELS.get('deepseek-coder')()
+    messages = [{
+        'role': 'system',
+        'content': 'you are a helpful assistant'
+    }, {
+        'role': 'user',
+        'content': 'who are you'
+    }, {
+        'role': 'assistant',
+        'content': 'I am an AI'
+    }]
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(
+        'deepseek-ai/deepseek-coder-1.3b-instruct', trust_remote_code=True)
+    ref = tokenizer.apply_chat_template(messages, tokenize=False)
+    res = '<｜begin▁of▁sentence｜>' + model.messages2prompt(messages)
+    assert res.startswith(ref)
