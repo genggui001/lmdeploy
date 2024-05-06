@@ -1,9 +1,10 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-import dataclasses
 import os
 import random
 
-from lmdeploy.turbomind.utils import get_gen_param
+from lmdeploy.messages import EngineGenerationConfig, TurbomindEngineConfig
+from lmdeploy.model import ChatTemplateConfig
+from lmdeploy.tokenizer import DetokenizeState
 
 os.environ['TM_LOG_LEVEL'] = 'ERROR'
 
@@ -29,32 +30,57 @@ def valid_str(string, coding='utf-8'):
     return ret
 
 
-def main(model_path,
+def main(model_path: str,
+         model_name: str = None,
          session_id: int = 1,
          cap: str = 'chat',
          tp: int = 1,
          stream_output: bool = True,
-         request_output_len: int = 512,
+         request_output_len: int = 1024,
+         chat_template_cfg: ChatTemplateConfig = None,
          **kwargs):
     """An example to perform model inference through the command line
     interface.
 
     Args:
         model_path (str): the path of the deployed model
+        model_name (str): the name of deployed model
         session_id (int): the identical id of a session
         cap (str): the capability of a model. For example, codellama has
             the ability among ['completion', 'infilling', 'chat', 'python']
         tp (int): GPU number used in tensor parallelism
         stream_output (bool): indicator for streaming output or not
+        request_output_len (int): output token nums
+        chat_template_cfg (ChatTemplateConfig): Chat template config
         **kwarg (dict): other arguments for initializing model's chat template
     """
     from lmdeploy import turbomind as tm
-    tm_model = tm.TurboMind.from_pretrained(model_path,
-                                            tp=tp,
-                                            capability=cap,
-                                            **kwargs)
+    if chat_template_cfg is None:
+        chat_template_cfg = ChatTemplateConfig(model_name=model_name,
+                                               capability=cap)
+        new_kwargs = {}
+        for k, v in kwargs.items():
+            if hasattr(chat_template_cfg, k):
+                setattr(chat_template_cfg, k, v)
+            else:
+                new_kwargs[k] = v
+        kwargs = new_kwargs
+
+    engine_cfg = TurbomindEngineConfig(model_name=model_name, tp=tp)
+    for k, v in kwargs.items():
+        if hasattr(engine_cfg, k):
+            setattr(engine_cfg, k, v)
+
+    tm_model = tm.TurboMind.from_pretrained(
+        model_path,
+        model_name=model_name,
+        engine_config=engine_cfg,
+        capability=cap,
+        chat_template_config=chat_template_cfg,
+        **kwargs)
     tokenizer = tm_model.tokenizer
     generator = tm_model.create_instance()
+    gen_config = EngineGenerationConfig(top_k=40)
 
     nth_round = 1
     step = 0
@@ -90,29 +116,30 @@ def main(model_path,
                       ' Please end the session.')
                 continue
 
-            gen_param = get_gen_param(cap, model.sampling_param, nth_round,
-                                      step, request_output_len, **kwargs)
+            sequence_start = (nth_round == 1)
+            sequence_end = False
+            if cap != 'chat':  # not interactive for other capability
+                sequence_start, sequence_end = True, True
+                step = 0
 
             print(f'{prompt} ', end='', flush=True)
-            response_size = 0
+            state = DetokenizeState()
             for outputs in generator.stream_infer(
                     session_id=session_id,
                     input_ids=[input_ids],
+                    sequence_start=sequence_start,
+                    sequence_end=sequence_end,
+                    step=step,
                     stream_output=stream_output,
-                    **dataclasses.asdict(gen_param),
+                    gen_config=gen_config,
                     ignore_eos=False,
                     random_seed=seed if nth_round == 1 else None):
-                res, tokens = outputs[0]
+                res, tokens = outputs.token_ids, outputs.num_token
                 # decode res
-                response = tokenizer.decode(res.tolist(), offset=response_size)
-                # utf-8 char at the end means it's a potential unfinished
-                # byte sequence, continue to concate it with the next
-                # sequence and decode them together
-                if response.endswith('�'):
-                    continue
+                response, state = tokenizer.detokenize_incrementally(
+                    res, state=state)
                 response = valid_str(response)
                 print(f'{response}', end='', flush=True)
-                response_size = tokens
 
             # update step
             step += len(input_ids) + tokens

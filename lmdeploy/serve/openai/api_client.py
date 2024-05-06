@@ -4,8 +4,11 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 
 import requests
 
+from lmdeploy.utils import get_logger
+
 
 def get_model_list(api_url: str):
+    """Get model list from api server."""
     response = requests.get(api_url)
     if hasattr(response, 'text'):
         model_list = json.loads(response.text)
@@ -14,15 +17,31 @@ def get_model_list(api_url: str):
     return None
 
 
+def json_loads(content):
+    """Loads content to json format."""
+    try:
+        content = json.loads(content)
+        return content
+    except:  # noqa
+        logger = get_logger('lmdeploy')
+        logger.warning(f'weird json content {content}')
+        return ''
+
+
 class APIClient:
     """Chatbot for LLaMA series models with turbomind as inference engine.
 
     Args:
         api_server_url (str): communicating address 'http://<ip>:<port>' of
             api_server
+        api_key (str | None): api key. Default to None, which means no
+            api key will be used.
     """
 
-    def __init__(self, api_server_url: str, **kwargs):
+    def __init__(self,
+                 api_server_url: str,
+                 api_key: Optional[str] = None,
+                 **kwargs):
         self.api_server_url = api_server_url
         self.chat_intractive_v1_url = f'{api_server_url}/v1/chat/interactive'
         self.chat_completions_v1_url = f'{api_server_url}/v1/chat/completions'
@@ -30,15 +49,19 @@ class APIClient:
         self.models_v1_url = f'{api_server_url}/v1/models'
         self.encode_v1_url = f'{api_server_url}/v1/encode'
         self._available_models = None
+        self.api_key = api_key
+        self.headers = {'content-type': 'application/json'}
+        if api_key is not None:
+            self.headers['Authorization'] = f'Bearer {api_key}'
 
     @property
     def available_models(self):
         """Show available models."""
         if self._available_models is not None:
             return self._available_models
-        response = requests.get(self.models_v1_url)
+        response = requests.get(self.models_v1_url, headers=self.headers)
         if hasattr(response, 'text'):
-            model_list = json.loads(response.text)
+            model_list = json_loads(response.text)
             model_list = model_list.pop('data', [])
             self._available_models = [item['id'] for item in model_list]
             return self._available_models
@@ -57,15 +80,14 @@ class APIClient:
                 when it is not. Default to True.
         Return: (input_ids, length)
         """
-        headers = {'content-type': 'application/json'}
         response = requests.post(self.encode_v1_url,
-                                 headers=headers,
+                                 headers=self.headers,
                                  json=dict(input=input,
                                            do_preprocess=do_preprocess,
                                            add_bos=add_bos),
                                  stream=False)
         if hasattr(response, 'text'):
-            output = json.loads(response.text)
+            output = json_loads(response.text)
             return output['input_ids'], output['length']
         return None, None
 
@@ -75,8 +97,8 @@ class APIClient:
                             temperature: Optional[float] = 0.7,
                             top_p: Optional[float] = 1.0,
                             n: Optional[int] = 1,
-                            max_tokens: Optional[int] = 512,
-                            stop: Optional[bool] = False,
+                            max_tokens: Optional[int] = None,
+                            stop: Optional[Union[str, List[str]]] = None,
                             stream: Optional[bool] = False,
                             presence_penalty: Optional[float] = 0.0,
                             frequency_penalty: Optional[float] = 0.0,
@@ -84,12 +106,14 @@ class APIClient:
                             repetition_penalty: Optional[float] = 1.0,
                             session_id: Optional[int] = -1,
                             ignore_eos: Optional[bool] = False,
+                            skip_special_tokens: Optional[bool] = True,
                             **kwargs):
         """Chat completion v1.
 
         Args:
             model: model name. Available from self.available_models.
-            messages: string prompt or chat history in OpenAI format.
+            messages: string prompt or chat history in OpenAI format. Chat
+                history example: `[{"role": "user", "content": "hi"}]`.
             temperature (float): to modulate the next token probability
             top_p (float): If set to float < 1, only the smallest set of most
                 probable tokens with probabilities that add up to top_p or
@@ -97,11 +121,15 @@ class APIClient:
             n (int): How many chat completion choices to generate for each
                 input message. Only support one here.
             stream: whether to stream the results or not. Default to false.
-            max_tokens (int): output token nums
+            max_tokens (int | None): output token nums. Default to None.
+            stop (str | List[str] | None): To stop generating further
+              tokens. Only accept stop words that's encoded to one token idex.
             repetition_penalty (float): The parameter for repetition penalty.
                 1.0 means no penalty
             ignore_eos (bool): indicator for ignoring eos
-            session_id (int): if not specified, will set random value
+            skip_special_tokens (bool): Whether or not to remove special tokens
+                in the decoding. Default to be True.
+            session_id (int): Deprecated.
 
         Yields:
             json objects in openai formats
@@ -111,9 +139,8 @@ class APIClient:
             for k, v in locals().copy().items()
             if k[:2] != '__' and k not in ['self']
         }
-        headers = {'content-type': 'application/json'}
         response = requests.post(self.chat_completions_v1_url,
-                                 headers=headers,
+                                 headers=self.headers,
                                  json=pload,
                                  stream=stream)
         for chunk in response.iter_lines(chunk_size=8192,
@@ -126,25 +153,28 @@ class APIClient:
                         continue
                     if decoded[:6] == 'data: ':
                         decoded = decoded[6:]
-                    output = json.loads(decoded)
+                    output = json_loads(decoded)
                     yield output
                 else:
                     decoded = chunk.decode('utf-8')
-                    output = json.loads(decoded)
+                    output = json_loads(decoded)
                     yield output
 
     def chat_interactive_v1(self,
                             prompt: Union[str, List[Dict[str, str]]],
+                            image_url: Optional[Union[str, List[str]]] = None,
                             session_id: int = -1,
                             interactive_mode: bool = False,
                             stream: bool = False,
-                            stop: bool = False,
-                            request_output_len: int = 512,
+                            stop: Optional[Union[str, List[str]]] = None,
+                            request_output_len: Optional[int] = None,
                             top_p: float = 0.8,
                             top_k: int = 40,
                             temperature: float = 0.8,
                             repetition_penalty: float = 1.0,
                             ignore_eos: bool = False,
+                            skip_special_tokens: Optional[bool] = True,
+                            adapter_name: Optional[str] = None,
                             **kwargs):
         """Interactive completions.
 
@@ -155,6 +185,8 @@ class APIClient:
 
         Args:
             prompt: the prompt to use for the generation.
+            image_url (str | List[str] | None): the image url or base64 encoded
+                string for VL models.
             session_id: determine which instance will be called.
                 If not specified with a value other than -1, using random value
                 directly.
@@ -162,8 +194,10 @@ class APIClient:
                 interactive mode, session history is kept on the server (and
                 vice versa).
             stream: whether to stream the results or not.
-            stop: whether to stop the session response or not.
-            request_output_len (int): output token nums
+            stop (str | List[str] | None): To stop generating further tokens.
+                Only accept stop words that's encoded to one token idex.
+            request_output_len (int): output token nums. If not specified,
+                will use maximum possible number for a session.
             top_p (float): If set to float < 1, only the smallest set of most
                 probable tokens with probabilities that add up to top_p or
                 higher are kept for generation.
@@ -173,18 +207,22 @@ class APIClient:
             repetition_penalty (float): The parameter for repetition penalty.
                 1.0 means no penalty
             ignore_eos (bool): indicator for ignoring eos
+            skip_special_tokens (bool): Whether or not to remove special tokens
+                in the decoding. Default to be True.
+            adapter_name (str): For slora inference. Choose which lora to do
+                the inference.
 
         Yields:
-            json objects consist of text, tokens, finish_reason
+            json objects consist of text, tokens, input_tokens,
+                history_tokens, finish_reason
         """
         pload = {
             k: v
             for k, v in locals().copy().items()
             if k[:2] != '__' and k not in ['self']
         }
-        headers = {'content-type': 'application/json'}
         response = requests.post(self.chat_intractive_v1_url,
-                                 headers=headers,
+                                 headers=self.headers,
                                  json=pload,
                                  stream=stream)
         for chunk in response.iter_lines(chunk_size=8192,
@@ -192,7 +230,7 @@ class APIClient:
                                          delimiter=b'\n'):
             if chunk:
                 decoded = chunk.decode('utf-8')
-                output = json.loads(decoded)
+                output = json_loads(decoded)
                 yield output
 
     def completions_v1(
@@ -204,12 +242,15 @@ class APIClient:
             n: Optional[int] = 1,
             max_tokens: Optional[int] = 16,
             stream: Optional[bool] = False,
+            stop: Optional[Union[str, List[str]]] = None,
             top_p: Optional[float] = 1.0,
+            top_k: Optional[int] = 40,
             user: Optional[str] = None,
             # additional argument of lmdeploy
             repetition_penalty: Optional[float] = 1.0,
             session_id: Optional[int] = -1,
             ignore_eos: Optional[bool] = False,
+            skip_special_tokens: Optional[bool] = True,
             **kwargs):
         """Chat completion v1.
 
@@ -223,14 +264,20 @@ class APIClient:
             top_p (float): If set to float < 1, only the smallest set of most
                 probable tokens with probabilities that add up to top_p or
                 higher are kept for generation.
+            top_k (int): The number of the highest probability vocabulary
+                tokens to keep for top-k-filtering
             n (int): How many chat completion choices to generate for each
                 input message. Only support one here.
             stream: whether to stream the results or not. Default to false.
+            stop (str | List[str] | None): To stop generating further
+              tokens. Only accept stop words that's encoded to one token idex.
             repetition_penalty (float): The parameter for repetition penalty.
                 1.0 means no penalty
             user (str): A unique identifier representing your end-user.
             ignore_eos (bool): indicator for ignoring eos
-            session_id (int): if not specified, will set random value
+            skip_special_tokens (bool): Whether or not to remove special tokens
+                in the decoding. Default to be True.
+            session_id (int): Deprecated.
 
         Yields:
             json objects in openai formats
@@ -240,9 +287,8 @@ class APIClient:
             for k, v in locals().copy().items()
             if k[:2] != '__' and k not in ['self']
         }
-        headers = {'content-type': 'application/json'}
         response = requests.post(self.completions_v1_url,
-                                 headers=headers,
+                                 headers=self.headers,
                                  json=pload,
                                  stream=stream)
         for chunk in response.iter_lines(chunk_size=8192,
@@ -250,21 +296,22 @@ class APIClient:
                                          delimiter=b'\n'):
             if chunk:
                 if stream:
-                    decoded = chunk.decode('utf-8')[6:]
+                    decoded = chunk.decode('utf-8')
                     if decoded == 'data: [DONE]':
                         continue
                     if decoded[:6] == 'data: ':
                         decoded = decoded[6:]
-                    output = json.loads(decoded)
+                    output = json_loads(decoded)
                     yield output
                 else:
                     decoded = chunk.decode('utf-8')
-                    output = json.loads(decoded)
+                    output = json_loads(decoded)
                     yield output
 
     def chat(self,
              prompt: str,
              session_id: int,
+             image_url: Optional[Union[str, List[str]]] = None,
              request_output_len: int = 512,
              stream: bool = False,
              top_p: float = 0.8,
@@ -279,6 +326,8 @@ class APIClient:
             session_id: determine which instance will be called.
                 If not specified with a value other than -1, using random value
                 directly.
+            image_url (str | List[str] | None): the image url or base64 encoded
+                string for VL models.
             stream: whether to stream the results or not.
             stop: whether to stop the session response or not.
             request_output_len (int): output token nums
@@ -299,6 +348,7 @@ class APIClient:
         for outputs in self.chat_interactive_v1(
                 prompt,
                 session_id=session_id,
+                image_url=image_url,
                 request_output_len=request_output_len,
                 interactive_mode=True,
                 stream=stream,
@@ -307,7 +357,7 @@ class APIClient:
                 temperature=temperature,
                 repetition_penalty=repetition_penalty,
                 ignore_eos=ignore_eos):
-            if outputs['finish_reason'] == 'length':
+            if outputs['finish_reason'] == 'length' and outputs['tokens'] == 0:
                 print('WARNING: exceed session max length.'
                       ' Please end the session.')
             yield outputs['text'], outputs['tokens'], outputs['finish_reason']
@@ -334,15 +384,21 @@ def input_prompt():
     return '\n'.join(iter(input, sentinel))
 
 
-def get_streaming_response(prompt: str,
-                           api_url: str,
-                           session_id: int,
-                           request_output_len: int = 512,
-                           stream: bool = True,
-                           interactive_mode: bool = False,
-                           ignore_eos: bool = False,
-                           stop: bool = False) -> Iterable[List[str]]:
+def get_streaming_response(
+        prompt: str,
+        api_url: str,
+        session_id: int,
+        request_output_len: int = 512,
+        stream: bool = True,
+        interactive_mode: bool = False,
+        ignore_eos: bool = False,
+        cancel: bool = False,
+        top_p: float = 0.8,
+        temperature: float = 0.7,
+        api_key: Optional[str] = None) -> Iterable[List[str]]:
     headers = {'User-Agent': 'Test Client'}
+    if api_key is not None:
+        headers['Authorization'] = f'Bearer {api_key}'
     pload = {
         'prompt': prompt,
         'stream': stream,
@@ -350,7 +406,9 @@ def get_streaming_response(prompt: str,
         'request_output_len': request_output_len,
         'interactive_mode': interactive_mode,
         'ignore_eos': ignore_eos,
-        'stop': stop
+        'cancel': cancel,
+        'top_p': top_p,
+        'temperature': temperature
     }
     response = requests.post(api_url,
                              headers=headers,
@@ -360,15 +418,18 @@ def get_streaming_response(prompt: str,
                                      decode_unicode=False,
                                      delimiter=b'\n'):
         if chunk:
-            data = json.loads(chunk.decode('utf-8'))
+            data = json_loads(chunk.decode('utf-8'))
             output = data.pop('text', '')
             tokens = data.pop('tokens', 0)
             finish_reason = data.pop('finish_reason', None)
             yield output, tokens, finish_reason
 
 
-def main(api_server_url: str, session_id: int = 0):
-    api_client = APIClient(api_server_url)
+def main(api_server_url: str,
+         session_id: int = 0,
+         api_key: Optional[str] = None):
+    """Main function to chat in terminal."""
+    api_client = APIClient(api_server_url, api_key=api_key)
     while True:
         prompt = input_prompt()
         if prompt in ['exit', 'end']:

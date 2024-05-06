@@ -17,7 +17,8 @@ LMDeploy 提供了编译镜像 `openmmlab/lmdeploy-builder:cuda11.8`。使用之
 在 lmdeploy 源码的根目录下，运行以下命令：
 
 ```shell
-cd lmdeploy # lmdeploy 源码根目录
+# lmdeploy 源码根目录
+cd lmdeploy
 bash builder/manywheel/build_all_wheel.sh
 ```
 
@@ -54,21 +55,25 @@ wheel 文件存放在目录 `builder/manywheel/cuda11.8_dist` 下。
   ```
 - 安装 [nccl](https://docs.nvidia.com/deeplearning/nccl/install-guide/index.html),设置环境变量
   ```shell
-  export NCCL_ROOT_DIR=/path/to/nccl/build
-  export NCCL_LIBRARIES=/path/to/nccl/build/lib
+  export NCCL_ROOT_DIR=/path/to/nccl
+  export NCCL_LIBRARIES=/path/to/nccl/lib
   ```
 - 源码编译安装 openmpi:
   ```shell
   wget https://download.open-mpi.org/release/open-mpi/v4.1/openmpi-4.1.5.tar.gz
   tar xf openmpi-4.1.5.tar.gz
   cd openmpi-4.1.5
-  ./configure
+  ./configure --prefix=/usr/local/openmpi
   make -j$(nproc) && make install
+  export PATH=$PATH:/usr/local/openmpi/bin
+  export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/openmpi/lib
   ```
 - lmdeploy 编译安装:
   ```shell
-  apt install ninja-build # 安装更快的 Ninja
-  cd lmdeploy # lmdeploy 源码的根目录
+  # 安装更快的 Ninja
+  apt install ninja-build
+  # lmdeploy 源码的根目录
+  cd lmdeploy
   mkdir build && cd build
   sh ../generate.sh
   ninja && ninja install

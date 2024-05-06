@@ -53,6 +53,7 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
     'sphinx.ext.autosectionlabel',
+    'sphinx_tabs.tabs',
     'sphinx_markdown_tables',
     'myst_parser',
     'sphinx_copybutton',
@@ -106,10 +107,10 @@ html_theme_path = [pytorch_sphinx_theme.get_html_theme_path()]
 # documentation.
 #
 html_theme_options = {
-    'logo_url': 'https://lmdeploy.readthedocs.io/zh_CN/latest/',
+    'logo_url': 'https://lmdeploy.readthedocs.io/zh-cn/latest/',
     'menu': [{
         'name': 'GitHub',
-        'url': 'https://github.com/open-mmlab/lmdeploy'
+        'url': 'https://github.com/InternLM/lmdeploy'
     }],
     'menu_lang': 'cn',
 }
